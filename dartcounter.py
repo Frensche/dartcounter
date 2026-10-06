@@ -12,12 +12,15 @@ Features:
 - Bust-Erkennung (Double-Out: <0 oder ==1 ist Bust)
 - Undo der letzten Eingabe
 - Legs (First to X), 3-Darts-Average je Spieler
-- Turniermodus (KO-Baum): ein Rechner ist Turnierleiter + Server, beliebig viele
-  Stationen (z.B. 6 Rechner) holen sich Matches und melden Ergebnisse automatisch
+- Turniermodus: KO-Baum oder Gruppenphase + KO-Runde. Ein Rechner ist Turnierleiter
+  + Server (passwortgeschützt), beliebig viele Stationen (z.B. 6 Rechner) holen sich
+  Matches und melden Ergebnisse automatisch
+- Anzeige der letzten Aufnahmen je Spieler, Vereinslogo, Kiosk-Modus (Vollbild)
 - Einstellungen werden unter ~/.config/dartcounter/config.json gespeichert
 
 Start:
-    python3 dartcounter.py
+    python3 dartcounter.py               (Kiosk-Modus / Vollbild)
+    python3 dartcounter.py --windowed    (normales Fenster, z.B. zum Testen)
 
 Benötigt:
     sudo apt install python3-tk   (falls tkinter noch nicht installiert ist)
@@ -25,6 +28,7 @@ Benötigt:
 
 import json
 import os
+import sys
 from functools import lru_cache
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -32,6 +36,8 @@ from tkinter import ttk, messagebox
 from tournament import TOURNAMENT_PATH, DEFAULT_PORT, Tournament, TournamentClient, \
     TournamentError, TournamentServer
 import tournament_ui
+import lock
+import theme
 
 # --------------------------------------------------------------------------
 # Konfiguration
@@ -151,16 +157,25 @@ class Player:
         self.legs_won = 0
         self.turn_scores = []  # alle Turn-Scores dieses Legs (für Average)
         self.all_scores = []   # alle Turn-Scores des ganzen Spiels/Matches
+        self.throws = []       # alle Aufnahmen dieses Legs als (Score, Bust) - für die Anzeige
 
     def reset_leg(self, start_score):
         self.score = start_score
         self.turn_scores = []
+        self.throws = []
 
     @property
     def average(self):
         if not self.turn_scores:
             return 0.0
         return sum(self.turn_scores) / len(self.turn_scores)
+
+    def recent_text(self, n=6):
+        """Letzte Aufnahmen, neueste zuerst, z.B. '100 · 60 · BUST (45)'."""
+        if not self.throws:
+            return "-"
+        parts = [f"BUST ({sc})" if bust else str(sc) for sc, bust in reversed(self.throws[-n:])]
+        return "  ·  ".join(parts)
 
     @property
     def match_average(self):
@@ -181,7 +196,8 @@ class NewGameDialog(tk.Toplevel):
         self.cfg = cfg
         self.result = None
         self.transient(master)
-        self.grab_set()
+        theme.set_window_icon(self)
+        theme.modal(self)
 
         pad = {"padx": 10, "pady": 6}
 
@@ -223,7 +239,7 @@ class NewGameDialog(tk.Toplevel):
 
         btns = ttk.Frame(frm)
         btns.grid(row=5, column=0, columnspan=2, pady=(15, 0))
-        ttk.Button(btns, text="Spiel starten", command=self._on_start).pack(side="left", padx=5)
+        ttk.Button(btns, text="Spiel starten", style="Accent.TButton", command=self._on_start).pack(side="left", padx=5)
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="left", padx=5)
 
         self.bind("<Return>", lambda e: self._on_start())
@@ -271,7 +287,8 @@ class SettingsDialog(tk.Toplevel):
         self.cfg = cfg
         self.on_saved = on_saved
         self.transient(master)
-        self.grab_set()
+        theme.set_window_icon(self)
+        theme.modal(self)
 
         frm = ttk.Frame(self, padding=15)
         frm.grid(sticky="nsew")
@@ -295,7 +312,7 @@ class SettingsDialog(tk.Toplevel):
 
         btns = ttk.Frame(frm)
         btns.grid(row=5, column=0, columnspan=4, pady=(15, 0))
-        ttk.Button(btns, text="Speichern", command=self._save).pack(side="left", padx=5)
+        ttk.Button(btns, text="Speichern", style="Accent.TButton", command=self._save).pack(side="left", padx=5)
         ttk.Button(btns, text="Zurücksetzen", command=self._reset_defaults).pack(side="left", padx=5)
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="left", padx=5)
 
@@ -325,11 +342,14 @@ class SettingsDialog(tk.Toplevel):
 # --------------------------------------------------------------------------
 
 class DartCounterApp:
-    def __init__(self, root):
+    def __init__(self, root, kiosk=True):
         self.root = root
-        self.root.title("Dartcounter")
-        self.root.geometry("980x640")
-        self.root.minsize(860, 560)
+        self.root.title("Dartcounter - TSV Feichten")
+        self.root.geometry("1100x760")
+        self.root.minsize(900, 640)
+        theme.apply_style(self.root)
+        theme.set_window_icon(self.root)
+        self.root.protocol("WM_DELETE_WINDOW", self.request_quit)
 
         self.cfg = load_config()
 
@@ -352,6 +372,10 @@ class DartCounterApp:
         self._build_menu()
         self._build_layout()
 
+        self.fullscreen = False
+        if kiosk:
+            self._set_fullscreen(True)
+
         # Direkt beim Start ein neues Spiel anbieten
         self.root.after(150, self.new_game)
 
@@ -364,12 +388,15 @@ class DartCounterApp:
         game_menu.add_command(label="Neues Spiel...", command=self.new_game)
         game_menu.add_command(label="Leg neu starten", command=self.restart_leg)
         game_menu.add_separator()
-        game_menu.add_command(label="Beenden", command=self.root.quit)
+        game_menu.add_command(label="Kiosk-Modus (Vollbild) ein/aus  [Passwort]", command=self.toggle_kiosk)
+        game_menu.add_command(label="Beenden  [Passwort im Kiosk-Modus]", command=self.request_quit)
         menubar.add_cascade(label="Spiel", menu=game_menu)
 
         tourn_menu = tk.Menu(menubar, tearoff=0)
-        tourn_menu.add_command(label="Neues Turnier erstellen (Turnierleiter)...", command=self.new_tournament)
-        tourn_menu.add_command(label="Gespeichertes Turnier fortsetzen", command=self.resume_tournament)
+        tourn_menu.add_command(label="Neues Turnier erstellen (Turnierleiter)  [Passwort]...",
+                               command=self.new_tournament)
+        tourn_menu.add_command(label="Gespeichertes Turnier fortsetzen  [Passwort]",
+                               command=self.resume_tournament)
         tourn_menu.add_command(label="Turnierleiter-Fenster anzeigen", command=self.show_master)
         tourn_menu.add_separator()
         tourn_menu.add_command(label="Als Station verbinden...", command=self.connect_station)
@@ -378,6 +405,7 @@ class DartCounterApp:
 
         settings_menu = tk.Menu(menubar, tearoff=0)
         settings_menu.add_command(label="F1-F12 bearbeiten...", command=self.open_settings)
+        settings_menu.add_command(label="Turnierleiter-Passwort ändern...", command=self.change_password)
         menubar.add_cascade(label="Einstellungen", menu=settings_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -392,27 +420,60 @@ class DartCounterApp:
             "F1-F12: schnellen Turn-Score für aktuellen Spieler eintragen\n"
             "Enter: eingegebenen Zahlenwert bestätigen\n"
             "Strg+Z: letzte Eingabe rückgängig machen\n"
-            "Backspace/Entf im Zahlenfeld: löscht die Eingabe",
+            "Backspace/Entf im Zahlenfeld: löscht die Eingabe\n\n"
+            "Kiosk-Modus: Menü Spiel -> Kiosk-Modus ein/aus (Passwort nötig).\n"
+            "Zum Testen im Fenster starten: python3 dartcounter.py --windowed",
         )
+
+    # ---------------- Kiosk / Sperre ----------------
+
+    def _set_fullscreen(self, on):
+        self.fullscreen = on
+        try:
+            self.root.attributes("-fullscreen", on)
+        except tk.TclError:
+            pass
+
+    def toggle_kiosk(self):
+        if self.fullscreen and not lock.ask_password(
+                self.root, self.cfg, "Zum Verlassen des Kiosk-Modus ist das Passwort nötig."):
+            return
+        self._set_fullscreen(not self.fullscreen)
+
+    def request_quit(self):
+        if self.fullscreen:
+            if not lock.ask_password(self.root, self.cfg, "Zum Beenden des Programms ist das Passwort nötig."):
+                return
+        elif (self.tourn or (self.master_win and self.master_win.winfo_exists())) and not messagebox.askyesno(
+                "Beenden", "Es läuft noch ein Turnier bzw. Turnier-Match.\n\nProgramm trotzdem beenden?"):
+            return
+        self.root.quit()
+
+    def change_password(self):
+        lock.ChangePasswordDialog(self.root, self.cfg, save_config)
+
+    def _unlock_master(self):
+        if self.master_win and self.master_win.winfo_exists():
+            return True
+        return lock.ask_password(self.root, self.cfg, "Der Turnierleiter-Bereich ist passwortgeschützt.")
 
     # ---------------- Layout ----------------
 
     def _build_layout(self):
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        style.configure("Player.TFrame", background="#1e1e1e")
-        style.configure("PlayerActive.TFrame", background="#2d5a2d")
-
-        outer = ttk.Frame(self.root, padding=10)
+        outer = ttk.Frame(self.root, padding=(16, 12))
         outer.pack(fill="both", expand=True)
 
-        # Kopfzeile: Spielinfo
+        # Kopfzeile: Logo + Spielinfo
+        header = ttk.Frame(outer)
+        header.pack(fill="x", pady=(0, 10))
+        logo = theme.load_image("logo_small.png")
+        if logo:
+            ttk.Label(header, image=logo).pack(side="left", padx=(0, 14))
+        titles = ttk.Frame(header)
+        titles.pack(side="left")
+        ttk.Label(titles, text="TSV Feichten - Dartcounter", style="Title.TLabel").pack(anchor="w")
         self.info_var = tk.StringVar(value="")
-        info_label = ttk.Label(outer, textvariable=self.info_var, font=("", 13, "bold"))
-        info_label.pack(fill="x", pady=(0, 10))
+        ttk.Label(titles, textvariable=self.info_var, style="Muted.TLabel", font=("", 11)).pack(anchor="w")
 
         # Spieler-Panels
         self.players_container = ttk.Frame(outer)
@@ -421,39 +482,38 @@ class DartCounterApp:
 
         # Checkout-Vorschlag
         self.checkout_var = tk.StringVar(value="")
-        checkout_label = ttk.Label(
-            outer, textvariable=self.checkout_var, font=("", 16, "bold"), foreground="#2a7a2a"
-        )
-        checkout_label.pack(pady=(5, 10))
+        ttk.Label(outer, textvariable=self.checkout_var, style="Good.TLabel", font=("", 17, "bold")).pack(
+            pady=(2, 10))
 
         # Eingabebereich
-        input_frame = ttk.LabelFrame(outer, text="Score eingeben", padding=10)
-        input_frame.pack(fill="x", pady=(0, 10))
+        input_frame = ttk.LabelFrame(outer, text="Score eingeben", padding=12)
+        input_frame.pack(fill="x", pady=(0, 8))
 
         top_row = ttk.Frame(input_frame)
-        top_row.pack(fill="x", pady=(0, 8))
-        ttk.Label(top_row, text="Turn-Score (0-180):").pack(side="left")
+        top_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(top_row, text="Turn-Score (0-180):", font=("", 11)).pack(side="left")
         self.entry_var = tk.StringVar()
-        self.entry = ttk.Entry(top_row, textvariable=self.entry_var, width=8, font=("", 12))
-        self.entry.pack(side="left", padx=8)
-        ttk.Button(top_row, text="Bestätigen (Enter)", command=self.submit_manual).pack(side="left", padx=4)
-        ttk.Button(top_row, text="Undo (Strg+Z)", command=self.undo).pack(side="left", padx=4)
+        self.entry = ttk.Entry(top_row, textvariable=self.entry_var, width=7, font=("", 16, "bold"))
+        self.entry.pack(side="left", padx=10)
+        ttk.Button(top_row, text="Bestätigen", style="Accent.TButton", command=self.submit_manual).pack(
+            side="left", padx=4)
+        ttk.Button(top_row, text="Undo  (Strg+Z)", command=self.undo).pack(side="left", padx=4)
 
         self.fkey_buttons_frame = ttk.Frame(input_frame)
         self.fkey_buttons_frame.pack(fill="x")
         self._build_fkey_buttons()
 
         self.log_var = tk.StringVar(value="")
-        ttk.Label(outer, textvariable=self.log_var, foreground="#666").pack(fill="x")
+        ttk.Label(outer, textvariable=self.log_var, style="Muted.TLabel").pack(fill="x")
 
         # Turnier-Leiste (nur sichtbar, solange an dieser Station ein Turnier-Match läuft)
-        self.tourn_bar = ttk.LabelFrame(outer, text="Turnier-Match", padding=8)
+        self.tourn_bar = ttk.LabelFrame(outer, text="Turnier-Match", padding=10)
         self.tourn_var = tk.StringVar(value="")
-        ttk.Label(self.tourn_bar, textvariable=self.tourn_var, font=("", 11, "bold")).pack(side="left")
-        ttk.Button(self.tourn_bar, text="Match abbrechen", command=self.abort_tournament_match).pack(
-            side="right", padx=4)
-        self.send_btn = ttk.Button(self.tourn_bar, text="Ergebnis senden", command=self.send_tournament_result,
-                                   state="disabled")
+        ttk.Label(self.tourn_bar, textvariable=self.tourn_var, font=("", 12, "bold")).pack(side="left")
+        ttk.Button(self.tourn_bar, text="Match abbrechen", style="Danger.TButton",
+                   command=self.abort_tournament_match).pack(side="right", padx=4)
+        self.send_btn = ttk.Button(self.tourn_bar, text="Ergebnis senden", style="Accent.TButton",
+                                   command=self.send_tournament_result, state="disabled")
         self.send_btn.pack(side="right", padx=4)
 
         # Key-Bindings
@@ -469,32 +529,38 @@ class DartCounterApp:
         self.fkey_btns = []
         for i, val in enumerate(fkeys):
             btn = ttk.Button(
-                self.fkey_buttons_frame, text=f"F{i+1}: {val}",
-                command=lambda idx=i: self.submit_fkey(idx), width=10
+                self.fkey_buttons_frame, text=f"F{i+1}\n{val}", style="Quick.TButton",
+                command=lambda idx=i: self.submit_fkey(idx)
             )
             row, col = divmod(i, 6)
-            btn.grid(row=row, column=col, padx=4, pady=4)
+            self.fkey_buttons_frame.columnconfigure(col, weight=1, uniform="fkeys")
+            btn.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
             self.fkey_btns.append(btn)
 
     def _rebuild_player_panels(self):
         for child in self.players_container.winfo_children():
             child.destroy()
         self.player_widgets = []
-        n = len(self.players)
         for i, p in enumerate(self.players):
-            self.players_container.columnconfigure(i, weight=1)
-            frame = tk.Frame(self.players_container, bd=2, relief="ridge", padx=10, pady=8)
-            frame.grid(row=0, column=i, sticky="nsew", padx=5)
+            self.players_container.columnconfigure(i, weight=1, uniform="players")
+            frame = tk.Frame(self.players_container, bd=0, highlightthickness=2, highlightbackground=theme.LINE,
+                             padx=12, pady=10)
+            frame.grid(row=0, column=i, sticky="nsew", padx=6)
 
-            name_lbl = tk.Label(frame, text=p.name, font=("", 13, "bold"))
+            name_lbl = tk.Label(frame, text=p.name, font=("", 16, "bold"))
             name_lbl.pack()
-            score_lbl = tk.Label(frame, text=str(p.score), font=("", 34, "bold"))
+            score_lbl = tk.Label(frame, text=str(p.score), font=("", 54, "bold"))
             score_lbl.pack()
-            sub_lbl = tk.Label(frame, text="", font=("", 10))
+            sub_lbl = tk.Label(frame, text="", font=("", 11))
             sub_lbl.pack()
+            caption = tk.Label(frame, text="LETZTE WÜRFE", font=("", 8, "bold"))
+            caption.pack(pady=(8, 0))
+            recent_lbl = tk.Label(frame, text="-", font=("", 12, "bold"), wraplength=240, justify="center")
+            recent_lbl.pack()
 
             self.player_widgets.append({
-                "frame": frame, "name": name_lbl, "score": score_lbl, "sub": sub_lbl
+                "frame": frame, "name": name_lbl, "score": score_lbl, "sub": sub_lbl,
+                "caption": caption, "recent": recent_lbl,
             })
 
     # ---------------- Spiel-Steuerung ----------------
@@ -602,6 +668,7 @@ class DartCounterApp:
             "recorded": not bust,
             "won_leg": False,
         })
+        player.throws.append((turn_score, bust))
 
         if bust:
             self.log_var.set(f"{player.name}: {turn_score} -> BUST! Score bleibt bei {prev_score}.")
@@ -658,6 +725,8 @@ class DartCounterApp:
             return
         last = self.history.pop()
         player = self.players[last["player_idx"]]
+        if player.throws:
+            player.throws.pop()
         if last["recorded"]:
             player.turn_scores.pop()
             player.all_scores.pop()
@@ -682,15 +751,15 @@ class DartCounterApp:
         for i, p in enumerate(self.players):
             w = self.player_widgets[i]
             active = (i == self.current_idx) and not self.match_over
-            bg = "#2d5a2d" if active else "#f0f0f0"
-            fg = "white" if active else "black"
-            w["frame"].configure(bg=bg)
+            bg = theme.RED if active else theme.CARD
+            fg = "white" if active else theme.INK
+            muted = "#f6d3d7" if active else theme.MUTED
+            w["frame"].configure(bg=bg, highlightbackground=theme.RED if active else theme.LINE)
             w["name"].configure(bg=bg, fg=fg, text=("▶ " if active else "") + p.name)
             w["score"].configure(bg=bg, fg=fg, text=str(p.score))
-            w["sub"].configure(
-                bg=bg, fg=fg,
-                text=f"Legs: {p.legs_won}   Ø {p.average:.1f}"
-            )
+            w["sub"].configure(bg=bg, fg=fg, text=f"Legs: {p.legs_won}     Ø {p.average:.1f}")
+            w["caption"].configure(bg=bg, fg=muted)
+            w["recent"].configure(bg=bg, fg=fg, text=p.recent_text())
 
         if self.tourn:
             self.send_btn.configure(state="normal" if self.match_over else "disabled")
@@ -726,7 +795,7 @@ class DartCounterApp:
         return False
 
     def new_tournament(self):
-        if self._master_running():
+        if self._master_running() or not self._unlock_master():
             return
         dlg = tournament_ui.NewTournamentDialog(self.root, self.cfg)
         self.root.wait_window(dlg)
@@ -737,16 +806,11 @@ class DartCounterApp:
                 "Gespeichertes Turnier überschreiben?",
                 "Es existiert noch ein gespeichertes Turnier. Das neue Turnier ersetzt es.\n\nFortfahren?"):
             return
-        try:
-            t = Tournament(r["name"], r["players"], r["start_score"], r["double_out"],
-                           r["legs_to_win"], r["final_legs_to_win"], r["stations"], r["shuffle"])
-        except TournamentError as e:
-            messagebox.showerror("Turnier", str(e))
-            return
+        t = r["tournament"]
         self._open_master(t, r["port"])
 
     def resume_tournament(self):
-        if self._master_running():
+        if self._master_running() or not self._unlock_master():
             return
         if not os.path.exists(TOURNAMENT_PATH):
             messagebox.showinfo("Kein gespeichertes Turnier", "Es gibt noch kein gespeichertes Turnier.")
@@ -876,8 +940,9 @@ class DartCounterApp:
 
 
 def main():
+    kiosk = "--windowed" not in sys.argv
     root = tk.Tk()
-    app = DartCounterApp(root)
+    DartCounterApp(root, kiosk=kiosk)
     root.mainloop()
 
 

@@ -14,14 +14,14 @@ sudo apt install python3-tk
 ## Start
 
 ```bash
-python3 dartcounter.py
+python3 dartcounter.py              # Kiosk-Modus (Vollbild, keine Taskleiste)
+python3 dartcounter.py --windowed   # normales Fenster, z. B. zum Testen
 ```
 
-oder, da die Datei ausführbar ist:
-
-```bash
-./dartcounter.py
-```
+Im **Kiosk-Modus** füllt das Programm den ganzen Bildschirm. Zum Verlassen
+(*Spiel → Kiosk-Modus ein/aus*) und zum Beenden ist das Turnierleiter-Passwort nötig.
+Systemweite Tastenkürzel des Desktops (z. B. Super-Taste, Strg+Alt+T) kann das
+Programm nicht sperren - dafür müsste der Desktop selbst als Kiosk konfiguriert werden.
 
 ## Funktionen
 
@@ -33,6 +33,10 @@ oder, da die Datei ausführbar ist:
   (Standardbelegung: 26, 41, 45, 60, 81, 85, 95, 100, 110, 120, 140, 180),
   jederzeit über *Einstellungen → F1–F12 bearbeiten* änderbar. Die Belegung
   wird dauerhaft in `~/.config/dartcounter/config.json` gespeichert.
+- **Letzte Würfe** werden bei jedem Spieler angezeigt (neueste zuerst, Busts
+  als `BUST (45)` markiert)
+- **Vereinslogo** (TSV Feichten) im Kopf des Programms und als Fensterbild;
+  die Bilddateien liegen in `assets/` und lassen sich dort austauschen
 - **Manuelle Eingabe** eines beliebigen Turn-Scores (0–180) im Textfeld,
   Bestätigung mit Enter
 - **Checkout-Vorschläge**: sobald ein Spieler am Zug ist und sein Rest mit
@@ -57,42 +61,54 @@ oder, da die Datei ausführbar ist:
 - Menü *Spiel*: neues Spiel, Leg neu starten, Beenden
 - Menü *Einstellungen*: F1–F12 bearbeiten
 
-## Turniermodus (KO-System, mehrere Rechner im Netzwerk)
+## Turniermodus (mehrere Rechner im Netzwerk)
 
-Ein Rechner ist **Turnierleiter** (hält den Turnierbaum und startet einen kleinen
-Server), beliebig viele weitere Rechner (Standard: 6) sind **Stationen**. Alle
-laufen mit demselben Programm (`python3 dartcounter.py`), alle Rechner müssen im
-selben Netzwerk sein. Es werden nur Python-Standardbibliotheken benötigt.
+Ein Rechner ist **Turnierleiter** (hält Turnierbaum bzw. Gruppentabellen und startet einen
+kleinen Server), beliebig viele weitere Rechner (Standard: 6) sind **Stationen**. Alle
+laufen mit demselben Programm, alle Rechner müssen im selben Netzwerk sein. Es werden nur
+Python-Standardbibliotheken benötigt.
 
-**Turnierleiter:**
+### Turnierleiter (passwortgeschützt)
 
-1. Menü *Turnier → Neues Turnier erstellen (Turnierleiter)...*
-2. Turniername, Spieler (einer pro Zeile, 2-64), Startpunktzahl, Double-Out,
-   Legs zum Sieg (Runden / Finale), Anzahl Stationen, Port. Die Spieler werden
-   zufällig ausgelost (abschaltbar = Reihenfolge ist die Setzliste). Bei einer
-   Spielerzahl, die keine Zweierpotenz ist, gibt es automatisch Freilose.
-3. Im Turnierleiter-Fenster siehst du den Turnierbaum, den Status der Stationen
-   und oben die Adresse (`IP:Port`), mit der sich die Stationen verbinden.
-4. Matches anklicken (Doppelklick): Ergebnis manuell eintragen/korrigieren, ein
-   hängendes Match an einer Station freigeben oder ein Ergebnis zurücksetzen
-   (nur solange das Folge-Match noch nicht läuft).
-5. Der Stand wird nach jeder Änderung in `~/.config/dartcounter/tournament.json`
-   gespeichert. Über *Turnier → Gespeichertes Turnier fortsetzen* geht es nach
-   einem Neustart weiter.
+Der Turnierleiter-Bereich (*Turnier → Neues Turnier / Gespeichertes Turnier fortsetzen*)
+ist durch ein Passwort gesperrt. Das Passwort ändert man unter
+*Einstellungen → Turnierleiter-Passwort ändern...* (gespeichert wird nur ein Hash).
+Es ist eine Sperre gegen versehentliche Bedienung, kein Hochsicherheitssystem.
 
-**Stationen:**
+1. *Turnier → Neues Turnier erstellen*
+2. Turniername, Spieler (einer pro Zeile, 2-64) und der **Turniermodus**:
+   - **Nur KO-Runde**: Turnierbaum, bei ungerader Spielerzahl mit Freilosen.
+   - **Gruppenphase + KO-Runde**: Anzahl Gruppen, wie viele pro Gruppe weiterkommen und
+     Legs der Gruppenspiele einstellbar. Die Spieler werden per Schlangenverteilung auf
+     die Gruppen verteilt, in jeder Gruppe spielt jeder gegen jeden.
+3. Startpunktzahl, Double-Out, Legs (Gruppe / KO-Runde / Finale), Anzahl Stationen, Port.
+4. Das Fenster zeigt oben die Adresse (`IP:Port`), mit der sich die Stationen verbinden,
+   außerdem Gruppentabellen und Spiele, den Turnierbaum und den Status der Stationen.
+5. Matches anklicken (Doppelklick): Ergebnis manuell eintragen/korrigieren, ein
+   hängendes Match freigeben oder ein Ergebnis zurücksetzen.
+6. Der Stand wird nach jeder Änderung in `~/.config/dartcounter/tournament.json`
+   gespeichert und lässt sich nach einem Neustart fortsetzen.
 
-1. Menü *Turnier → Als Station verbinden...*: IP des Turnierleiters, Port und
-   die Nummer dieser Station (1-6) eingeben.
-2. Im Station-Fenster erscheinen alle spielbereiten Matches. Eins auswählen und
-   *Ausgewähltes Match hier spielen* (oder Doppelklick) - es ist dann für alle
-   anderen Stationen gesperrt.
-3. Das Match wird mit Namen, Startpunktzahl, Double-Out und Legs aus dem Turnier
-   im normalen Zähler gespielt. Ist es zu Ende, mit *Ergebnis senden* an den
-   Turnierleiter übermitteln (vorher ist noch Undo möglich) - der Sieger wird
-   automatisch in den Turnierbaum eingetragen und die nächste Runde freigeschaltet.
+**Gruppenphase im Detail:** Sieg = 2 Punkte. Platzierung nach Punkten, dann Leg-Differenz,
+dann gewonnenen Legs, dann direktem Vergleich (bei genau zwei Gleichplatzierten), zuletzt
+alphabetisch. Sind alle Gruppenspiele beendet, wird die KO-Runde automatisch ausgelost:
+Gruppensieger gegen Zweite anderer Gruppen, die Besten bekommen bei Bedarf Freilose.
+Gruppenergebnisse lassen sich nachträglich korrigieren, solange in der KO-Runde noch kein
+Spiel begonnen hat (die Auslosung wird dann neu berechnet). Ein Spieler kann nie an zwei
+Stationen gleichzeitig spielen.
+
+### Stationen
+
+1. *Turnier → Als Station verbinden...*: IP des Turnierleiters, Port und die Nummer dieser
+   Station (1-6) eingeben.
+2. Im Station-Fenster erscheinen alle spielbereiten Matches (Gruppen- und KO-Spiele).
+   Eins auswählen und *Ausgewähltes Match hier spielen* (oder Doppelklick) - es ist dann
+   für alle anderen Stationen gesperrt.
+3. Das Match wird mit Namen, Startpunktzahl, Double-Out und Legs aus dem Turnier im
+   normalen Zähler gespielt. Ist es zu Ende, mit *Ergebnis senden* übermitteln (vorher ist
+   noch Undo möglich) - Tabelle bzw. Turnierbaum werden automatisch aktualisiert.
    *Match abbrechen* gibt das Match wieder frei.
 
-Hinweis: Die Verbindung ist unverschlüsselt und ohne Passwort - gedacht für das
-lokale Netzwerk in der Halle/zu Hause. Eine eventuelle Firewall muss den Port
-(Standard 8765) am Turnierleiter-Rechner durchlassen.
+Hinweis: Die Verbindung ist unverschlüsselt und ohne Passwort - gedacht für das lokale
+Netzwerk in der Halle. Eine eventuelle Firewall muss den Port (Standard 8765) am
+Turnierleiter-Rechner durchlassen.

@@ -89,10 +89,46 @@ def clean_players(players):
 # Turnier
 # --------------------------------------------------------------------------
 
+GROUP_NAMES = "ABCDEFGHIJKLMNOP"
+MAX_GROUPS = len(GROUP_NAMES)
+MODE_KO = "ko"
+MODE_GROUPS = "groups_ko"
+
+
+def _round_robin(names):
+    """Jeder gegen jeden (Kreismethode); liefert pro Spieltag eine Liste von Paarungen."""
+    players = list(names)
+    if len(players) % 2:
+        players.append(None)
+    n = len(players)
+    rounds = []
+    for _ in range(n - 1):
+        pairs = [(players[i], players[n - 1 - i]) for i in range(n // 2)]
+        rounds.append([(a, b) for a, b in pairs if a is not None and b is not None])
+        players = [players[0]] + [players[-1]] + players[1:-1]
+    return rounds
+
+
 class Tournament:
     def __init__(self, name, players, start_score=501, double_out=True,
-                 legs_to_win=2, final_legs_to_win=3, stations=6, shuffle=True):
+                 legs_to_win=2, final_legs_to_win=3, stations=6, shuffle=True,
+                 mode=MODE_KO, groups=0, advance=2, group_legs_to_win=2):
         names = clean_players(players)
+        if mode not in (MODE_KO, MODE_GROUPS):
+            raise TournamentError("Unbekannter Turniermodus.")
+        if mode == MODE_GROUPS:
+            if not (1 <= groups <= MAX_GROUPS):
+                raise TournamentError(f"Die Anzahl der Gruppen muss zwischen 1 und {MAX_GROUPS} liegen.")
+            if len(names) < 2 * groups:
+                raise TournamentError(
+                    f"Für {groups} Gruppen werden mindestens {2 * groups} Spieler benötigt "
+                    f"(jede Gruppe braucht mindestens 2).")
+            min_size = len(names) // groups
+            if not (1 <= advance <= min_size):
+                raise TournamentError(
+                    f"Pro Gruppe können 1 bis {min_size} Spieler in die KO-Runde kommen.")
+            if groups * advance < 2:
+                raise TournamentError("Für die KO-Runde müssen mindestens 2 Spieler weiterkommen.")
         if shuffle:
             names = random.sample(names, len(names))
 
@@ -101,8 +137,12 @@ class Tournament:
         self.double_out = bool(double_out)
         self.legs_to_win = max(1, int(legs_to_win))
         self.final_legs_to_win = max(1, int(final_legs_to_win))
+        self.group_legs_to_win = max(1, int(group_legs_to_win))
         self.stations = max(1, int(stations))
         self.players = names
+        self.mode = mode
+        self.group_count = int(groups) if mode == MODE_GROUPS else 0
+        self.advance = int(advance) if mode == MODE_GROUPS else 0
         self._init_runtime()
         self._build()
 
@@ -114,44 +154,90 @@ class Tournament:
 
     # ---------------- Aufbau ----------------
 
+    def _new_match(self, mid, stage, **extra):
+        m = {
+            "id": mid,
+            "stage": stage,        # "group" oder "ko"
+            "group": None,         # Gruppenindex (nur Gruppenspiele)
+            "round": None,         # KO-Runde (nur KO)
+            "index": None,
+            "p": [None, None],
+            "winner": None,
+            "legs": None,
+            "avg": None,
+            "station": None,       # läuft gerade an dieser Station
+            "done_station": None,  # wurde an dieser Station gespielt
+            "walkover": False,
+        }
+        m.update(extra)
+        return m
+
     def _build(self):
-        n = len(self.players)
+        self.matches = []
+        self.groups = []
+        if self.mode == MODE_GROUPS:
+            g = self.group_count
+            self.groups = [[] for _ in range(g)]
+            for idx, name in enumerate(self.players):      # Schlangenverteilung
+                row, col = divmod(idx, g)
+                self.groups[col if row % 2 == 0 else g - 1 - col].append(name)
+            schedule = []
+            for gi, members in enumerate(self.groups):
+                for day, pairs in enumerate(_round_robin(members)):
+                    for a, b in pairs:
+                        schedule.append((day, gi, a, b))
+            schedule.sort(key=lambda x: (x[0], x[1]))
+            counters = {}
+            for day, gi, a, b in schedule:
+                k = counters.get(gi, 0)
+                counters[gi] = k + 1
+                self.matches.append(self._new_match(f"g{gi}m{k}", "group", group=gi, index=k, round=day, p=[a, b]))
+            n_ko = self.group_count * self.advance
+        else:
+            n_ko = len(self.players)
+        self._build_ko(n_ko)
+
+    def _build_ko(self, n):
         size = 1
         while size < n:
             size *= 2
+        self.ko_size = size
+        self.ko_players = n
         self.rounds = size.bit_length() - 1
-
-        self.matches = []
+        order = seed_order(size)
         for r in range(self.rounds):
             for i in range(size >> (r + 1)):
-                self.matches.append({
-                    "id": f"r{r}m{i}",
-                    "round": r,
-                    "index": i,
-                    "p": [None, None],
-                    "winner": None,
-                    "legs": None,
-                    "avg": None,
-                    "station": None,       # läuft gerade an dieser Station
-                    "done_station": None,  # wurde an dieser Station gespielt
-                    "walkover": False,
-                })
+                m = self._new_match(f"r{r}m{i}", "ko", round=r, index=i)
+                if r == 0:
+                    m["seeds"] = [order[2 * i], order[2 * i + 1]]
+                    m["p"] = [BYE if sd > n else None for sd in m["seeds"]]
+                self.matches.append(m)
+        self.ko_filled = False
+        if self.mode == MODE_KO:
+            self._place_ko([self.players[sd - 1] if sd <= n else BYE for sd in order])
 
-        slots = [self.players[s - 1] if s <= n else BYE for s in seed_order(size)]
-        for i in range(size // 2):
+    def _place_ko(self, slots):
+        for i in range(self.ko_size // 2):
             self.match_at(0, i)["p"] = [slots[2 * i], slots[2 * i + 1]]
-
-        for m in self.matches:
+        for m in self.ko_matches():
             if m["round"] == 0 and BYE in m["p"]:
                 m["winner"] = m["p"][0] if m["p"][1] == BYE else m["p"][1]
                 m["walkover"] = True
                 self._advance(m)
+        self.ko_filled = True
 
     # ---------------- Zugriff ----------------
 
+    def ko_matches(self):
+        return [m for m in self.matches if m["stage"] == "ko"]
+
+    def group_matches(self, gi=None):
+        return [m for m in self.matches
+                if m["stage"] == "group" and (gi is None or m["group"] == gi)]
+
     def match_at(self, rnd, idx):
         for m in self.matches:
-            if m["round"] == rnd and m["index"] == idx:
+            if m["stage"] == "ko" and m["round"] == rnd and m["index"] == idx:
                 return m
         return None
 
@@ -162,7 +248,7 @@ class Tournament:
         raise TournamentError(f"Unbekanntes Match '{match_id}'.")
 
     def _next(self, m):
-        if m["round"] >= self.rounds - 1:
+        if m["stage"] != "ko" or m["round"] >= self.rounds - 1:
             return None
         return self.match_at(m["round"] + 1, m["index"] // 2)
 
@@ -176,9 +262,13 @@ class Tournament:
         return "waiting"
 
     def legs_needed(self, m):
+        if m["stage"] == "group":
+            return self.group_legs_to_win
         return self.final_legs_to_win if m["round"] == self.rounds - 1 else self.legs_to_win
 
     def label(self, m):
+        if m["stage"] == "group":
+            return f"Gruppe {GROUP_NAMES[m['group']]} - Spieltag {m['round'] + 1}"
         name = round_name(m["round"], self.rounds)
         if m["round"] == self.rounds - 1:
             return name
@@ -187,6 +277,17 @@ class Tournament:
     def champion(self):
         final = self.match_at(self.rounds - 1, 0)
         return final["winner"] if final else None
+
+    def groups_done(self):
+        gm = self.group_matches()
+        return bool(gm) and all(m["winner"] for m in gm)
+
+    def stage(self):
+        if self.champion():
+            return "done"
+        if self.mode == MODE_GROUPS and not self.ko_filled:
+            return "groups"
+        return "ko"
 
     def _changed(self):
         self.version += 1
@@ -210,6 +311,110 @@ class Tournament:
                 )
             nxt["p"][m["index"] % 2] = None
 
+    # ---------------- Gruppenphase ----------------
+
+    def group_table(self, gi):
+        """Tabelle einer Gruppe: Punkte (Sieg = 2), Leg-Differenz, gewonnene Legs, direkter Vergleich."""
+        rows = {n: {"name": n, "played": 0, "wins": 0, "losses": 0,
+                    "legs_for": 0, "legs_against": 0, "points": 0} for n in self.groups[gi]}
+        h2h = {}
+        for m in self.group_matches(gi):
+            if not m["winner"]:
+                continue
+            a, b = m["p"]
+            win = m["winner"]
+            lose = b if win == a else a
+            la, lb = m["legs"] if m["legs"] else ((1, 0) if win == a else (0, 1))
+            rows[a]["legs_for"] += la
+            rows[a]["legs_against"] += lb
+            rows[b]["legs_for"] += lb
+            rows[b]["legs_against"] += la
+            rows[win]["wins"] += 1
+            rows[win]["points"] += 2
+            rows[lose]["losses"] += 1
+            for n in (a, b):
+                rows[n]["played"] += 1
+            h2h[frozenset((a, b))] = win
+
+        def key(r):
+            return (-r["points"], -(r["legs_for"] - r["legs_against"]), -r["legs_for"], r["name"].casefold())
+
+        table = sorted(rows.values(), key=key)
+        # Direkter Vergleich bei genau zwei punkt- und legsgleichen Spielern
+        i = 0
+        while i < len(table) - 1:
+            if key(table[i])[:3] == key(table[i + 1])[:3] and (
+                    i + 2 >= len(table) or key(table[i + 2])[:3] != key(table[i])[:3]):
+                w = h2h.get(frozenset((table[i]["name"], table[i + 1]["name"])))
+                if w == table[i + 1]["name"]:
+                    table[i], table[i + 1] = table[i + 1], table[i]
+                i += 2
+            else:
+                i += 1
+        for pos, r in enumerate(table, start=1):
+            r["rank"] = pos
+        return table
+
+    def _unfill_ko(self):
+        """Nimmt die Auslosung der KO-Runde zurück (nur solange dort noch nichts gespielt wurde)."""
+        if not self.ko_filled or self.mode != MODE_GROUPS:
+            return
+        for m in self.ko_matches():
+            if (m["winner"] and not m["walkover"]) or m["station"]:
+                raise TournamentError(
+                    "Die KO-Runde hat bereits begonnen - Gruppenergebnisse lassen sich nicht mehr ändern.")
+        for m in self.ko_matches():
+            m["winner"] = m["legs"] = m["avg"] = m["done_station"] = None
+            m["walkover"] = False
+            if m["round"] == 0:
+                m["p"] = [BYE if sd > self.ko_players else None for sd in m["seeds"]]
+            else:
+                m["p"] = [None, None]
+        self.ko_filled = False
+
+    def _after_group_change(self):
+        if self.mode == MODE_GROUPS and not self.ko_filled and self.groups_done():
+            self._fill_ko_from_groups()
+
+    def _fill_ko_from_groups(self):
+        tables = [self.group_table(gi) for gi in range(self.group_count)]
+        group_of = {n: gi for gi, members in enumerate(self.groups) for n in members}
+        place_of = {}
+        seeds = []
+        for place in range(self.advance):
+            level = [(gi, tables[gi][place]) for gi in range(self.group_count)]
+            level.sort(key=lambda x: (-x[1]["points"], -(x[1]["legs_for"] - x[1]["legs_against"]),
+                                      -x[1]["legs_for"], x[0]))
+            for gi, row in level:
+                seeds.append(row["name"])
+                place_of[row["name"]] = place
+        n = len(seeds)
+        slots = [seeds[sd - 1] if sd <= n else BYE for sd in seed_order(self.ko_size)]
+        self._avoid_clashes(slots, group_of, place_of)
+        self._place_ko(slots)
+
+    @staticmethod
+    def _avoid_clashes(slots, group_of, place_of):
+        """Tauscht Spieler gleicher Platzierung, damit in Runde 1 möglichst keine Gruppenkollegen aufeinandertreffen."""
+        pairs = len(slots) // 2
+        for p in range(pairs):
+            a, b = slots[2 * p], slots[2 * p + 1]
+            if BYE in (a, b) or group_of[a] != group_of[b]:
+                continue
+            done = False
+            for q in range(pairs):
+                if q == p or done:
+                    continue
+                for pos in (0, 1):
+                    z, w = slots[2 * q + pos], slots[2 * q + 1 - pos]
+                    if z == BYE or place_of[z] != place_of[b] or group_of[z] == group_of[a]:
+                        continue
+                    if w != BYE and group_of[w] == group_of[b]:
+                        continue
+                    slots[2 * p + 1], slots[2 * q + pos] = z, b
+                    done = True
+                    break
+
     # ---------------- Aktionen der Stationen ----------------
 
     def touch(self, station):
@@ -219,6 +424,16 @@ class Tournament:
     def _check_station(self, station):
         if not (1 <= station <= self.stations):
             raise TournamentError(f"Station {station} gibt es nicht (1-{self.stations}).")
+
+    def _busy_player(self, m):
+        """Name eines Spielers dieses Matches, der gerade an einem anderen Match spielt (sonst None)."""
+        for other in self.matches:
+            if other is m or not other["station"] or other["winner"]:
+                continue
+            for name in m["p"]:
+                if name and name != BYE and name in other["p"]:
+                    return name, other["station"]
+        return None
 
     def match_info(self, m):
         return {
@@ -242,6 +457,9 @@ class Tournament:
                 raise TournamentError(f"Dieses Match läuft schon an Station {m['station']}.")
             if self._status(m) != "ready":
                 raise TournamentError("Dieses Match ist noch nicht spielbereit.")
+            busy = self._busy_player(m)
+            if busy:
+                raise TournamentError(f"{busy[0]} spielt gerade an Station {busy[1]}.")
             for other in self.matches:
                 if other["station"] == station and not other["winner"]:
                     raise TournamentError(
@@ -270,6 +488,7 @@ class Tournament:
                 raise TournamentError("Dieses Match ist dieser Station nicht zugewiesen.")
             self._finish(m, winner, legs, avg)
             m["done_station"] = station
+            self._after_group_change()
             self._changed()
 
     # ---------------- Aktionen des Turnierleiters ----------------
@@ -291,10 +510,16 @@ class Tournament:
                 raise TournamentError("Freilos-Matches können nicht geändert werden.")
             if self._status(m) == "waiting":
                 raise TournamentError("Das Match hat noch nicht beide Spieler.")
+            if winner not in m["p"] or winner == BYE:
+                raise TournamentError("Der Sieger muss einer der beiden Spieler des Matches sein.")
+            if m["stage"] == "group":
+                self._unfill_ko()
             if m["winner"]:
                 self._unadvance(m)
                 m["winner"] = None
             self._finish(m, winner, legs, None)
+            if m["stage"] == "group":
+                self._after_group_change()
             self._changed()
 
     def reset_result(self, match_id):
@@ -304,6 +529,8 @@ class Tournament:
                 raise TournamentError("Freilos-Matches können nicht zurückgesetzt werden.")
             if not m["winner"]:
                 raise TournamentError("Für dieses Match gibt es kein Ergebnis.")
+            if m["stage"] == "group":
+                self._unfill_ko()
             self._unadvance(m)
             m["winner"] = m["legs"] = m["avg"] = m["done_station"] = None
             self._changed()
@@ -319,12 +546,28 @@ class Tournament:
                 c["status"] = self._status(m)
                 c["legs_to_win"] = self.legs_needed(m)
                 c["label"] = self.label(m)
+                busy = self._busy_player(m) if c["status"] == "ready" else None
+                c["busy"] = f"{busy[0]} (Station {busy[1]})" if busy else None
                 matches.append(c)
+            groups = []
+            for gi, members in enumerate(self.groups):
+                gm = self.group_matches(gi)
+                groups.append({
+                    "name": GROUP_NAMES[gi],
+                    "players": list(members),
+                    "table": self.group_table(gi),
+                    "done": all(m["winner"] for m in gm),
+                })
             return {
                 "name": self.name,
+                "mode": self.mode,
+                "stage": self.stage(),
                 "start_score": self.start_score,
                 "double_out": self.double_out,
                 "stations": self.stations,
+                "advance": self.advance,
+                "groups": groups,
+                "ko_filled": self.ko_filled,
                 "rounds": self.rounds,
                 "round_names": [round_name(r, self.rounds) for r in range(self.rounds)],
                 "champion": self.champion(),
@@ -337,13 +580,21 @@ class Tournament:
         with self.lock:
             return {
                 "name": self.name,
+                "mode": self.mode,
                 "start_score": self.start_score,
                 "double_out": self.double_out,
                 "legs_to_win": self.legs_to_win,
                 "final_legs_to_win": self.final_legs_to_win,
+                "group_legs_to_win": self.group_legs_to_win,
+                "group_count": self.group_count,
+                "advance": self.advance,
                 "stations": self.stations,
                 "players": self.players,
+                "groups": self.groups,
                 "rounds": self.rounds,
+                "ko_size": self.ko_size,
+                "ko_players": self.ko_players,
+                "ko_filled": self.ko_filled,
                 "matches": copy.deepcopy(self.matches),
             }
 
@@ -351,14 +602,25 @@ class Tournament:
     def from_dict(cls, d):
         t = cls.__new__(cls)
         t.name = d["name"]
+        t.mode = d.get("mode", MODE_KO)
         t.start_score = d["start_score"]
         t.double_out = d["double_out"]
         t.legs_to_win = d["legs_to_win"]
         t.final_legs_to_win = d["final_legs_to_win"]
+        t.group_legs_to_win = d.get("group_legs_to_win", d["legs_to_win"])
+        t.group_count = d.get("group_count", 0)
+        t.advance = d.get("advance", 0)
         t.stations = d["stations"]
         t.players = d["players"]
+        t.groups = d.get("groups", [])
         t.rounds = d["rounds"]
+        t.ko_size = d.get("ko_size", 1 << d["rounds"])
+        t.ko_players = d.get("ko_players", len(t.players))
+        t.ko_filled = d.get("ko_filled", True)
         t.matches = d["matches"]
+        for m in t.matches:  # ältere Speicherstände kannten noch keine Gruppen
+            m.setdefault("stage", "ko")
+            m.setdefault("group", None)
         t._init_runtime()
         return t
 
