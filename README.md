@@ -33,6 +33,10 @@ Programm nicht sperren - dafür müsste der Desktop selbst als Kiosk konfigurier
   (Standardbelegung: 26, 41, 45, 60, 81, 85, 95, 100, 110, 120, 140, 180),
   jederzeit über *Einstellungen → F1–F12 bearbeiten* änderbar. Die Belegung
   wird dauerhaft in `~/.config/dartcounter/config.json` gespeichert.
+- **Handicap** (Vorgabe in Punkten) pro Spieler - im freien Spiel (z. B. 1:1) und im
+  Turnier. Die Vorgabe wird relativ zum Spieler mit der kleinsten Vorgabe vom Startwert
+  abgezogen: Bei 501 und Vorgaben 0 / 100 startet der eine mit 501, der andere mit 401.
+  Bei mehr als zwei Spielern gilt dasselbe für jeden einzelnen.
 - **Letzte Würfe** werden bei jedem Spieler angezeigt (neueste zuerst, Busts
   als `BUST (45)` markiert)
 - **Vereinslogo** (TSV Feichten) im Kopf des Programms und als Fensterbild;
@@ -76,7 +80,10 @@ ist durch ein Passwort gesperrt. Das Passwort ändert man unter
 Es ist eine Sperre gegen versehentliche Bedienung, kein Hochsicherheitssystem.
 
 1. *Turnier → Neues Turnier erstellen*
-2. Turniername, Spieler (einer pro Zeile, 2-64) und der **Turniermodus**:
+2. Turniername, Spieler (einer pro Zeile, 2-64) und der **Turniermodus**. Handicaps
+   trägst du optional direkt in der Spielerliste ein: `Name;Vorgabe`, z. B. `Anna;100`.
+   Im Match gilt dann der Unterschied der beiden Vorgaben (siehe oben), die Startwerte
+   zeigen Station und Turnierleiter an.
    - **Nur KO-Runde**: Turnierbaum, bei ungerader Spielerzahl mit Freilosen.
    - **Gruppenphase + KO-Runde**: Anzahl Gruppen, wie viele pro Gruppe weiterkommen und
      Legs der Gruppenspiele einstellbar. Die Spieler werden per Schlangenverteilung auf
@@ -99,8 +106,10 @@ Stationen gleichzeitig spielen.
 
 ### Stationen
 
-1. *Turnier → Als Station verbinden...*: IP des Turnierleiters, Port und die Nummer dieser
-   Station (1-6) eingeben.
+1. *Turnier → Als Station verbinden...*: Der Turnierleiter wird **automatisch im Netzwerk
+   gesucht** (IP und Port werden eingetragen, das Programm merkt sich außerdem die letzte
+   Verbindung). Es genügt, die Nummer dieser Station zu prüfen und *Verbinden* (Enter) zu
+   drücken. Wird nichts gefunden, kann die IP wie bisher von Hand eingegeben werden.
 2. Im Station-Fenster erscheinen alle spielbereiten Matches (Gruppen- und KO-Spiele).
    Eins auswählen und *Ausgewähltes Match hier spielen* (oder Doppelklick) - es ist dann
    für alle anderen Stationen gesperrt.
@@ -110,5 +119,7 @@ Stationen gleichzeitig spielen.
    *Match abbrechen* gibt das Match wieder frei.
 
 Hinweis: Die Verbindung ist unverschlüsselt und ohne Passwort - gedacht für das lokale
-Netzwerk in der Halle. Eine eventuelle Firewall muss den Port (Standard 8765) am
-Turnierleiter-Rechner durchlassen.
+Netzwerk in der Halle. Eine eventuelle Firewall muss am Turnierleiter-Rechner den Port
+8765 (TCP, Turnierdaten) und 8766 (UDP, automatische Suche) durchlassen. Die Suche nutzt
+UDP-Broadcast und scannt zusätzlich das lokale Netz (/24) nach Port 8765; in WLANs mit
+Geräte-Isolation findet sie nichts - dann bitte die IP von Hand eintragen.

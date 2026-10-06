@@ -14,6 +14,7 @@ import random
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -21,6 +22,10 @@ from urllib.parse import parse_qs, urlparse
 
 BYE = "BYE"
 DEFAULT_PORT = 8765
+DISCOVERY_PORT = 8766            # UDP: Stationen finden den Turnierleiter automatisch
+DISCOVERY_MAGIC = b"DARTCOUNTER_DISCOVER_V1"
+MIN_START_SCORE = 2
+MAX_HANDICAP = 500
 MIN_PLAYERS = 2
 MAX_PLAYERS = 64
 ONLINE_SECONDS = 8  # Station gilt als "online", wenn sie sich in dieser Zeit gemeldet hat
@@ -69,6 +74,45 @@ def local_ip():
         s.close()
 
 
+def start_scores(base, handicaps):
+    """Startwerte mit Handicap.
+
+    Die Vorgabe ist die Zahl der Punkte, die ein Spieler weniger braucht. Sie wird relativ zum
+    Spieler mit der kleinsten Vorgabe vom Startwert abgezogen: Bei 501 und Vorgaben 0 / 100
+    starten die beiden mit 501 bzw. 401.
+    """
+    low = min(handicaps)
+    return [base - (h - low) for h in handicaps]
+
+
+def check_start_scores(base, handicaps):
+    if any(sc < MIN_START_SCORE for sc in start_scores(base, handicaps)):
+        raise TournamentError(
+            f"Die Vorgaben sind zu groß: Ein Spieler würde mit weniger als {MIN_START_SCORE} Punkten starten "
+            f"(Startpunktzahl {base}, größter Unterschied {max(handicaps) - min(handicaps)}).")
+
+
+def parse_players(lines):
+    """Zeilen wie 'Anna' oder 'Anna;100' -> (Namen, {Name: Vorgabe})."""
+    names, handicaps = [], {}
+    for line in lines:
+        if not line or not line.strip():
+            continue
+        name, sep, rest = line.partition(";")
+        name = name.strip()
+        hc = 0
+        if sep and rest.strip():
+            try:
+                hc = int(rest.strip())
+            except ValueError:
+                raise TournamentError(f"Ungültige Vorgabe bei '{name}': '{rest.strip()}' (bitte eine ganze Zahl).")
+            if not (0 <= hc <= MAX_HANDICAP):
+                raise TournamentError(f"Die Vorgabe bei '{name}' muss zwischen 0 und {MAX_HANDICAP} liegen.")
+        names.append(name)
+        handicaps[name] = hc
+    return names, handicaps
+
+
 def clean_players(players):
     names = [p.strip() for p in players if p and p.strip()]
     if not (MIN_PLAYERS <= len(names) <= MAX_PLAYERS):
@@ -112,8 +156,10 @@ def _round_robin(names):
 class Tournament:
     def __init__(self, name, players, start_score=501, double_out=True,
                  legs_to_win=2, final_legs_to_win=3, stations=6, shuffle=True,
-                 mode=MODE_KO, groups=0, advance=2, group_legs_to_win=2):
+                 mode=MODE_KO, groups=0, advance=2, group_legs_to_win=2, handicaps=None):
         names = clean_players(players)
+        handicaps = {n: int((handicaps or {}).get(n, 0)) for n in names}
+        check_start_scores(int(start_score), list(handicaps.values()))
         if mode not in (MODE_KO, MODE_GROUPS):
             raise TournamentError("Unbekannter Turniermodus.")
         if mode == MODE_GROUPS:
@@ -140,6 +186,7 @@ class Tournament:
         self.group_legs_to_win = max(1, int(group_legs_to_win))
         self.stations = max(1, int(stations))
         self.players = names
+        self.handicaps = handicaps
         self.mode = mode
         self.group_count = int(groups) if mode == MODE_GROUPS else 0
         self.advance = int(advance) if mode == MODE_GROUPS else 0
@@ -435,11 +482,18 @@ class Tournament:
                     return name, other["station"]
         return None
 
+    def match_starts(self, m):
+        """Startwerte der beiden Spieler (mit Handicap) oder None, solange das Match nicht feststeht."""
+        if not all(p and p != BYE for p in m["p"]):
+            return None
+        return start_scores(self.start_score, [self.handicaps.get(p, 0) for p in m["p"]])
+
     def match_info(self, m):
         return {
             "match_id": m["id"],
             "label": self.label(m),
             "players": list(m["p"]),
+            "starts": self.match_starts(m),
             "start_score": self.start_score,
             "double_out": self.double_out,
             "legs_to_win": self.legs_needed(m),
@@ -546,6 +600,7 @@ class Tournament:
                 c["status"] = self._status(m)
                 c["legs_to_win"] = self.legs_needed(m)
                 c["label"] = self.label(m)
+                c["starts"] = self.match_starts(m)
                 busy = self._busy_player(m) if c["status"] == "ready" else None
                 c["busy"] = f"{busy[0]} (Station {busy[1]})" if busy else None
                 matches.append(c)
@@ -568,6 +623,7 @@ class Tournament:
                 "advance": self.advance,
                 "groups": groups,
                 "ko_filled": self.ko_filled,
+                "handicaps": dict(self.handicaps),
                 "rounds": self.rounds,
                 "round_names": [round_name(r, self.rounds) for r in range(self.rounds)],
                 "champion": self.champion(),
@@ -590,6 +646,7 @@ class Tournament:
                 "advance": self.advance,
                 "stations": self.stations,
                 "players": self.players,
+                "handicaps": self.handicaps,
                 "groups": self.groups,
                 "rounds": self.rounds,
                 "ko_size": self.ko_size,
@@ -612,6 +669,7 @@ class Tournament:
         t.advance = d.get("advance", 0)
         t.stations = d["stations"]
         t.players = d["players"]
+        t.handicaps = d.get("handicaps") or {n: 0 for n in t.players}
         t.groups = d.get("groups", [])
         t.rounds = d["rounds"]
         t.ko_size = d.get("ko_size", 1 << d["rounds"])
@@ -659,6 +717,8 @@ def _make_handler(t):
 
         def do_GET(self):
             url = urlparse(self.path)
+            if url.path == "/api/ping":
+                return self._send(200, {"dartcounter": 1, "name": t.name, "stations": t.stations})
             if url.path != "/api/state":
                 return self._send(404, {"error": "not found"})
             station = parse_qs(url.query).get("station")
@@ -704,13 +764,121 @@ class TournamentServer:
         self._httpd.daemon_threads = True
         self.port = self._httpd.server_address[1]
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._stop_discovery = threading.Event()
+        self._udp = None
 
     def start(self):
         self._thread.start()
+        self._start_discovery()
+
+    def _start_discovery(self):
+        """Beantwortet UDP-Suchanfragen der Stationen (optional - ohne klappt die manuelle Eingabe weiter)."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("", DISCOVERY_PORT))
+            sock.settimeout(0.5)
+        except OSError:
+            return
+        self._udp = sock
+        threading.Thread(target=self._discovery_loop, daemon=True).start()
+
+    def _discovery_loop(self):
+        t = self.tournament
+        while not self._stop_discovery.is_set():
+            try:
+                data, addr = self._udp.recvfrom(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            if data == DISCOVERY_MAGIC:
+                reply = json.dumps({"dartcounter": 1, "name": t.name, "port": self.port,
+                                    "stations": t.stations}).encode("utf-8")
+                try:
+                    self._udp.sendto(reply, addr)
+                except OSError:
+                    pass
 
     def stop(self):
+        self._stop_discovery.set()
+        if self._udp:
+            self._udp.close()
         self._httpd.shutdown()
         self._httpd.server_close()
+
+
+# --------------------------------------------------------------------------
+# Automatische Suche nach dem Turnierleiter
+# --------------------------------------------------------------------------
+
+def _probe_http(host, port, timeout=0.5):
+    try:
+        with urlrequest.urlopen(f"http://{host}:{port}/api/ping", timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if data.get("dartcounter"):
+            return {"host": host, "port": port, "name": data.get("name", ""), "stations": data.get("stations")}
+    except (urlerror.URLError, OSError, ValueError):
+        pass
+    return None
+
+
+def _udp_search(hosts, wait=0.8):
+    found = []
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(0.2)
+        for h in hosts:
+            try:
+                sock.sendto(DISCOVERY_MAGIC, (h, DISCOVERY_PORT))
+            except OSError:
+                pass
+        end = time.time() + wait
+        while time.time() < end:
+            try:
+                data, addr = sock.recvfrom(1024)
+                info = json.loads(data.decode("utf-8"))
+                if info.get("dartcounter"):
+                    found.append({"host": addr[0], "port": int(info["port"]),
+                                  "name": info.get("name", ""), "stations": info.get("stations")})
+            except socket.timeout:
+                continue
+            except (OSError, ValueError, KeyError):
+                continue
+    finally:
+        sock.close()
+    return found
+
+
+def discover(ports=(DEFAULT_PORT,), udp_wait=0.8):
+    """Sucht Turnier-Server im lokalen Netz.
+
+    1. UDP-Broadcast (findet den Server auch bei abweichendem Port)
+    2. Zusätzlich Scan des lokalen /24-Netzes (und dieses Rechners) auf den angegebenen TCP-Ports -
+       klappt auch dort, wo Broadcasts gefiltert werden.
+    Liefert eine Liste von {host, port, name, stations}.
+    """
+    ip = local_ip()
+    targets = ["127.0.0.1"]
+    broadcast = ["255.255.255.255", "127.0.0.1"]
+    if not ip.startswith("127."):
+        prefix = ip.rsplit(".", 1)[0]
+        targets += [f"{prefix}.{i}" for i in range(1, 255)]
+        broadcast.append(f"{prefix}.255")
+
+    results = {(r["host"], r["port"]): r for r in _udp_search(broadcast, udp_wait)}
+    with ThreadPoolExecutor(max_workers=64) as pool:
+        futures = [pool.submit(_probe_http, h, p) for h in targets for p in ports]
+        for f in futures:
+            r = f.result()
+            if r:
+                results.setdefault((r["host"], r["port"]), r)
+    # Eigener Rechner: lieber die echte LAN-Adresse als 127.0.0.1 anzeigen, wenn beides gefunden wurde
+    for (host, port) in list(results):
+        if host == "127.0.0.1" and (ip, port) in results:
+            del results[(host, port)]
+    return sorted(results.values(), key=lambda r: (r["host"], r["port"]))
 
 
 # --------------------------------------------------------------------------

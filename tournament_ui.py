@@ -14,7 +14,7 @@ from tkinter import ttk, messagebox
 
 import theme
 from tournament import (BYE, DEFAULT_PORT, GROUP_NAMES, MAX_PLAYERS, MIN_PLAYERS, MODE_GROUPS, MODE_KO,
-                        ONLINE_SECONDS, Tournament, TournamentError, clean_players, local_ip)
+                        ONLINE_SECONDS, Tournament, TournamentError, discover, local_ip, parse_players)
 
 
 def run_async(widget, func, callback):
@@ -89,9 +89,11 @@ class NewTournamentDialog(tk.Toplevel):
         self.name_var = tk.StringVar(value="Dart-Turnier")
         ttk.Entry(left, textvariable=self.name_var, width=32).pack(anchor="w", pady=(2, 10))
         ttk.Label(left, text="Spieler (einer pro Zeile)").pack(anchor="w")
+        ttk.Label(left, text="Handicap optional:  Name;Vorgabe   z. B.  Anna;100", style="Muted.TLabel").pack(
+            anchor="w")
         txt_frame = ttk.Frame(left)
         txt_frame.pack(anchor="w", pady=(2, 0))
-        self.txt = tk.Text(txt_frame, width=30, height=16, relief="flat", highlightthickness=1,
+        self.txt = tk.Text(txt_frame, width=30, height=15, relief="flat", highlightthickness=1,
                            highlightbackground=theme.LINE, font=("", 11))
         sb = ttk.Scrollbar(txt_frame, orient="vertical", command=self.txt.yview)
         self.txt.configure(yscrollcommand=sb.set)
@@ -131,7 +133,7 @@ class NewTournamentDialog(tk.Toplevel):
         # ---- rechts: Spielregeln
         rules = ttk.LabelFrame(right, text="Spielregeln", padding=10)
         rules.pack(fill="x", pady=(10, 0))
-        ttk.Label(rules, text="Startpunktzahl").grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Label(rules, text="Startpunktzahl (ohne Handicap)").grid(row=0, column=0, sticky="w", pady=2)
         self.start_score = tk.IntVar(value=cfg.get("start_score", 501))
         sf = ttk.Frame(rules)
         sf.grid(row=0, column=1, sticky="w")
@@ -170,8 +172,11 @@ class NewTournamentDialog(tk.Toplevel):
         theme.modal(self)
         self.txt.focus_set()
 
-    def _players(self):
+    def _lines(self):
         return [line for line in self.txt.get("1.0", "end").splitlines() if line.strip()]
+
+    def _players(self):
+        return [line.partition(";")[0].strip() for line in self._lines()]
 
     def _mode_changed(self):
         state = "normal" if self.mode.get() == MODE_GROUPS else "disabled"
@@ -184,7 +189,9 @@ class NewTournamentDialog(tk.Toplevel):
 
     def _update_summary(self):
         n = len(self._players())
-        self.count_var.set(f"{n} Spieler (erlaubt: {MIN_PLAYERS}-{MAX_PLAYERS})")
+        with_hc = sum(1 for line in self._lines() if line.partition(";")[2].strip() not in ("", "0"))
+        self.count_var.set(f"{n} Spieler (erlaubt: {MIN_PLAYERS}-{MAX_PLAYERS})"
+                           + (f", {with_hc} mit Handicap" if with_hc else ""))
         if self.mode.get() != MODE_GROUPS:
             ko = n
             self.summary_var.set(f"KO-Runde mit {ko} Spielern." if n >= 2 else "")
@@ -205,10 +212,10 @@ class NewTournamentDialog(tk.Toplevel):
 
     def _on_ok(self):
         try:
-            players = clean_players(self._players())
+            players, handicaps = parse_players(self._lines())
             grouped = self.mode.get() == MODE_GROUPS
             t = Tournament(
-                self.name_var.get(), players,
+                self.name_var.get(), players, handicaps=handicaps,
                 start_score=self.start_score.get(), double_out=self.double_out.get(),
                 legs_to_win=self.legs.get(), final_legs_to_win=self.final_legs.get(),
                 stations=self.stations.get(), shuffle=self.shuffle.get(),
@@ -496,6 +503,9 @@ class MasterWindow(tk.Toplevel):
             extra = f"\nErgebnis: {m['legs'][0]}:{m['legs'][1]}, Sieger {m['winner']}"
             if m["avg"]:
                 extra += f"\nØ {m['avg'][0]} / {m['avg'][1]}"
+        starts = m.get("starts")
+        if starts and starts[0] != starts[1]:
+            extra += f"\nHandicap-Start: {starts[0]} / {starts[1]}"
         self.sel_var.set(f"{m['label']}\n{players}\nStatus: {status}\nFirst to {m['legs_to_win']}{extra}")
         can_edit = m["status"] in ("ready", "running", "done") and not m["walkover"]
         self.btn_result.configure(state="normal" if can_edit else "disabled")
@@ -694,35 +704,99 @@ class MasterWindow(tk.Toplevel):
 # --------------------------------------------------------------------------
 
 class ConnectDialog(tk.Toplevel):
+    """Verbindung zum Turnierleiter. Der Server wird automatisch im Netzwerk gesucht."""
+
     def __init__(self, master, cfg):
         super().__init__(master)
         self.title("Als Station verbinden")
         self.resizable(False, False)
         self.result = None
+        self._dead = False
+        self._found = []
         self.transient(master)
         theme.set_window_icon(self)
 
         frm = ttk.Frame(self, padding=18)
         frm.grid()
         pad = {"padx": 8, "pady": 6}
-        ttk.Label(frm, text="IP-Adresse des Turnierleiters:").grid(row=0, column=0, sticky="w", **pad)
+
+        search = ttk.LabelFrame(frm, text="Turnier im Netzwerk", padding=10)
+        search.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        self.found_var = tk.StringVar()
+        self.found_box = ttk.Combobox(search, textvariable=self.found_var, state="readonly", width=38)
+        self.found_box.grid(row=0, column=0, sticky="ew")
+        self.found_box.bind("<<ComboboxSelected>>", lambda e: self._pick())
+        self.search_btn = ttk.Button(search, text="Neu suchen", command=self.search)
+        self.search_btn.grid(row=0, column=1, padx=(8, 0))
+        self.status_var = tk.StringVar()
+        ttk.Label(search, textvariable=self.status_var, style="Muted.TLabel").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        ttk.Label(frm, text="IP-Adresse des Turnierleiters:").grid(row=1, column=0, sticky="w", **pad)
         self.host = tk.StringVar(value=cfg.get("tournament_host", ""))
         e = ttk.Entry(frm, textvariable=self.host, width=22, font=("", 11))
-        e.grid(row=0, column=1, **pad)
-        ttk.Label(frm, text="Port:").grid(row=1, column=0, sticky="w", **pad)
+        e.grid(row=1, column=1, **pad)
+        ttk.Label(frm, text="Port:").grid(row=2, column=0, sticky="w", **pad)
         self.port = tk.IntVar(value=cfg.get("tournament_port", DEFAULT_PORT))
-        ttk.Spinbox(frm, from_=1024, to=65535, textvariable=self.port, width=7).grid(row=1, column=1, sticky="w", **pad)
-        ttk.Label(frm, text="Diese Station (Nr.):").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Spinbox(frm, from_=1024, to=65535, textvariable=self.port, width=7).grid(row=2, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="Diese Station (Nr.):").grid(row=3, column=0, sticky="w", **pad)
         self.station = tk.IntVar(value=cfg.get("tournament_station", 1))
-        ttk.Spinbox(frm, from_=1, to=16, textvariable=self.station, width=5).grid(row=2, column=1, sticky="w", **pad)
+        ttk.Spinbox(frm, from_=1, to=16, textvariable=self.station, width=5).grid(row=3, column=1, sticky="w", **pad)
 
         btns = ttk.Frame(frm)
-        btns.grid(row=3, column=0, columnspan=2, pady=(14, 0), sticky="e")
+        btns.grid(row=4, column=0, columnspan=2, pady=(14, 0), sticky="e")
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="Verbinden", style="Accent.TButton", command=self._ok).pack(side="right")
         self.bind("<Return>", lambda ev: self._ok())
         theme.modal(self)
         e.focus_set()
+        self.search()
+
+    def destroy(self):
+        self._dead = True
+        super().destroy()
+
+    # ---------------- automatische Suche ----------------
+
+    def search(self):
+        self.search_btn.configure(state="disabled")
+        self.status_var.set("Suche läuft ...")
+        ports = tuple({DEFAULT_PORT, self._saved_port()})
+        run_async(self, lambda: discover(ports), self._on_found)
+
+    def _saved_port(self):
+        try:
+            return int(self.port.get())
+        except (tk.TclError, ValueError):
+            return DEFAULT_PORT
+
+    def _on_found(self, found, err):
+        if self._dead:
+            return
+        self.search_btn.configure(state="normal")
+        if err or not found:
+            self._found = []
+            self.found_box.configure(values=[])
+            self.found_var.set("")
+            self.status_var.set("Kein Turnier gefunden - IP-Adresse bitte unten eingeben "
+                                "(oder 'Neu suchen').")
+            return
+        self._found = found
+        self.found_box.configure(values=[self._label(r) for r in found])
+        self.found_box.current(0)
+        self._pick()
+        self.status_var.set(f"{len(found)} Turnier(e) gefunden." if len(found) > 1
+                            else "Turnier gefunden - mit 'Verbinden' (Enter) beitreten.")
+
+    @staticmethod
+    def _label(r):
+        return f"{r['name'] or 'Turnier'}  -  {r['host']}:{r['port']}"
+
+    def _pick(self):
+        idx = self.found_box.current()
+        if 0 <= idx < len(self._found):
+            self.host.set(self._found[idx]["host"])
+            self.port.set(self._found[idx]["port"])
 
     def _ok(self):
         host = self.host.get().strip()
@@ -882,8 +956,11 @@ class StationPanel(tk.Toplevel):
                     status, tags = f"wartet - {m['busy']} spielt", ("busy",)
                 else:
                     status, tags = f"läuft an Station {m['station']}", ("busy",)
+                names = f"{m['p'][0]} - {m['p'][1]}"
+                if m.get("starts") and m["starts"][0] != m["starts"][1]:
+                    names = f"{m['p'][0]} ({m['starts'][0]}) - {m['p'][1]} ({m['starts'][1]})"
                 self.tree.insert("", "end", iid=m["id"], tags=tags,
-                                 values=(m["label"], f"{m['p'][0]} - {m['p'][1]}", status))
+                                 values=(m["label"], names, status))
                 self._matches[m["id"]] = m
         if selected and selected[0] in self._matches:
             self.tree.selection_set(selected[0])

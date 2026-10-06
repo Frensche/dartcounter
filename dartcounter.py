@@ -33,8 +33,8 @@ from functools import lru_cache
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from tournament import TOURNAMENT_PATH, DEFAULT_PORT, Tournament, TournamentClient, \
-    TournamentError, TournamentServer
+from tournament import TOURNAMENT_PATH, DEFAULT_PORT, MAX_HANDICAP, Tournament, TournamentClient, \
+    TournamentError, TournamentServer, check_start_scores, start_scores
 import tournament_ui
 import lock
 import theme
@@ -151,16 +151,17 @@ def solve_checkout(score, darts_left, double_out=True):
 # --------------------------------------------------------------------------
 
 class Player:
-    def __init__(self, name):
+    def __init__(self, name, start_score=501):
         self.name = name
-        self.score = 501
+        self.start_score = start_score  # individueller Startwert (Handicap)
+        self.score = start_score
         self.legs_won = 0
         self.turn_scores = []  # alle Turn-Scores dieses Legs (für Average)
         self.all_scores = []   # alle Turn-Scores des ganzen Spiels/Matches
         self.throws = []       # alle Aufnahmen dieses Legs als (Score, Bust) - für die Anzeige
 
-    def reset_leg(self, start_score):
-        self.score = start_score
+    def reset_leg(self):
+        self.score = self.start_score
         self.turn_scores = []
         self.throws = []
 
@@ -219,7 +220,7 @@ class NewGameDialog(tk.Toplevel):
         self.name_vars = []
         self._build_name_fields()
 
-        ttk.Label(frm, text="Startpunktzahl:").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Startpunktzahl:").grid(row=2, column=0, sticky="w", **pad)  # Basiswert
         self.start_score = tk.IntVar(value=cfg.get("start_score", 501))
         score_frame = ttk.Frame(frm)
         score_frame.grid(row=2, column=1, sticky="w", **pad)
@@ -249,25 +250,41 @@ class NewGameDialog(tk.Toplevel):
         for child in self.name_frame.winfo_children():
             child.destroy()
         self.name_vars = []
+        self.hc_vars = []
         n = self.num_players.get()
         defaults = ["Spieler 1", "Spieler 2", "Spieler 3", "Spieler 4"]
+        ttk.Label(self.name_frame, text="Vorgabe (Handicap)", style="Muted.TLabel").grid(
+            row=0, column=2, columnspan=2, sticky="w", padx=(12, 0))
         for i in range(n):
-            ttk.Label(self.name_frame, text=f"Name Spieler {i + 1}:").grid(row=i, column=0, sticky="w", pady=2)
+            ttk.Label(self.name_frame, text=f"Name Spieler {i + 1}:").grid(row=i + 1, column=0, sticky="w", pady=2)
             var = tk.StringVar(value=defaults[i])
             entry = ttk.Entry(self.name_frame, textvariable=var, width=22)
-            entry.grid(row=i, column=1, sticky="w", padx=8, pady=2)
+            entry.grid(row=i + 1, column=1, sticky="w", padx=8, pady=2)
             if i == 0:
                 entry.focus_set()
                 entry.selection_range(0, tk.END)
             self.name_vars.append(var)
+            hc = tk.IntVar(value=0)
+            ttk.Spinbox(self.name_frame, from_=0, to=MAX_HANDICAP, increment=10, textvariable=hc,
+                        width=5).grid(row=i + 1, column=2, sticky="w", padx=(12, 4), pady=2)
+            ttk.Label(self.name_frame, text="Punkte").grid(row=i + 1, column=3, sticky="w")
+            self.hc_vars.append(hc)
 
     def _update_name_fields(self):
         self._build_name_fields()
 
     def _on_start(self):
         names = [v.get().strip() or f"Spieler {i+1}" for i, v in enumerate(self.name_vars)]
+        try:
+            handicaps = [max(0, int(v.get())) for v in self.hc_vars]
+            check_start_scores(self.start_score.get(), handicaps)
+        except (TournamentError, tk.TclError) as e:
+            messagebox.showerror("Vorgabe", str(e) if isinstance(e, TournamentError)
+                                 else "Bitte bei der Vorgabe eine ganze Zahl eingeben.", parent=self)
+            return
         self.result = {
             "names": names,
+            "handicaps": handicaps,
             "start_score": self.start_score.get(),
             "double_out": self.double_out.get(),
             "legs_to_win": max(1, self.legs_to_win.get()),
@@ -599,9 +616,11 @@ class DartCounterApp:
             self.cfg["legs_to_win"] = self.legs_to_win
             save_config(self.cfg)
 
-        self.players = [Player(name) for name in dlg2_result["names"]]
+        starts = dlg2_result.get("start_scores") or start_scores(
+            self.start_score, dlg2_result.get("handicaps") or [0] * len(dlg2_result["names"]))
+        self.players = [Player(name, sc) for name, sc in zip(dlg2_result["names"], starts)]
         for p in self.players:
-            p.reset_leg(self.start_score)
+            p.reset_leg()
         self.current_idx = 0
         self.leg_starter_idx = 0
         self.history = []
@@ -615,7 +634,7 @@ class DartCounterApp:
         if not self.players or self.match_over:
             return
         for p in self.players:
-            p.reset_leg(self.start_score)
+            p.reset_leg()
         self.current_idx = self.leg_starter_idx
         self.history = []
         self.match_over = False
@@ -713,7 +732,7 @@ class DartCounterApp:
             # nächstes Leg: Startspieler rotiert
             self.leg_starter_idx = (self.leg_starter_idx + 1) % len(self.players)
             for p in self.players:
-                p.reset_leg(self.start_score)
+                p.reset_leg()
             self.current_idx = self.leg_starter_idx
             self.history = []
 
@@ -744,9 +763,10 @@ class DartCounterApp:
         if not self.players:
             return
         mode = "Double-Out" if self.double_out else "Straight-Out"
-        self.info_var.set(
-            f"Start: {self.start_score}  |  {mode}  |  First to {self.legs_to_win} Leg(s)"
-        )
+        starts = sorted({p.start_score for p in self.players}, reverse=True)
+        start_txt = " / ".join(str(p.start_score) for p in self.players) + " (Handicap)" \
+            if len(starts) > 1 else str(self.start_score)
+        self.info_var.set(f"Start: {start_txt}  |  {mode}  |  First to {self.legs_to_win} Leg(s)")
 
         for i, p in enumerate(self.players):
             w = self.player_widgets[i]
@@ -757,7 +777,8 @@ class DartCounterApp:
             w["frame"].configure(bg=bg, highlightbackground=theme.RED if active else theme.LINE)
             w["name"].configure(bg=bg, fg=fg, text=("▶ " if active else "") + p.name)
             w["score"].configure(bg=bg, fg=fg, text=str(p.score))
-            w["sub"].configure(bg=bg, fg=fg, text=f"Legs: {p.legs_won}     Ø {p.average:.1f}")
+            handicap = f"     Start {p.start_score}" if len({q.start_score for q in self.players}) > 1 else ""
+            w["sub"].configure(bg=bg, fg=fg, text=f"Legs: {p.legs_won}     Ø {p.average:.1f}{handicap}")
             w["caption"].configure(bg=bg, fg=muted)
             w["recent"].configure(bg=bg, fg=fg, text=p.recent_text())
 
@@ -881,6 +902,7 @@ class DartCounterApp:
         self.tourn_bar.pack(fill="x", pady=(8, 0))
         self.start_game({
             "names": info["players"],
+            "start_scores": info.get("starts"),
             "start_score": info["start_score"],
             "double_out": info["double_out"],
             "legs_to_win": info["legs_to_win"],
