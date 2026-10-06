@@ -33,6 +33,11 @@ Programm nicht sperren - dafür müsste der Desktop selbst als Kiosk konfigurier
   (Standardbelegung: 26, 41, 45, 60, 81, 85, 95, 100, 110, 120, 140, 180),
   jederzeit über *Einstellungen → F1–F12 bearbeiten* änderbar. Die Belegung
   wird dauerhaft in `~/.config/dartcounter/config.json` gespeichert.
+- **Wer beginnt?** Vor jedem Spiel (auch bei Turnier-Matches) erscheint ein Dialog: eine
+  virtuelle **Münze** kann geworfen werden (mit Animation, beliebig oft wiederholbar), oder
+  die Spieler **bullen aus** und der Gewinner wird von Hand ausgewählt. Wer beginnt, lässt
+  sich in jedem Fall frei festlegen; in den folgenden Legs wechselt der Anwurf. Bei Bedarf
+  vor dem ersten Wurf auch später über *Spiel → Wer beginnt?* erreichbar.
 - **Handicap** (Vorgabe in Punkten) pro Spieler - im freien Spiel (z. B. 1:1) und im
   Turnier. Die Vorgabe wird relativ zum Spieler mit der kleinsten Vorgabe vom Startwert
   abgezogen: Bei 501 und Vorgaben 0 / 100 startet der eine mit 501, der andere mit 401.

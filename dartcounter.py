@@ -27,7 +27,9 @@ Benötigt:
 """
 
 import json
+import math
 import os
+import random
 import sys
 from functools import lru_cache
 import tkinter as tk
@@ -355,6 +357,130 @@ class SettingsDialog(tk.Toplevel):
 
 
 # --------------------------------------------------------------------------
+# Dialog: Wer beginnt? (Münzwurf / Ausbullen)
+# --------------------------------------------------------------------------
+
+class StartOrderDialog(tk.Toplevel):
+    """Vor dem Spiel: virtuelle Münze werfen oder ausbullen - und festlegen, wer mit dem Werfen beginnt."""
+
+    def __init__(self, master, names):
+        super().__init__(master)
+        self.title("Wer beginnt?")
+        self.resizable(False, False)
+        self.names = list(names)
+        self.result = None
+        self.winner = None
+        self._after = None
+        self._dead = False
+        self._tossing = False
+        self.transient(master)
+        theme.set_window_icon(self)
+
+        frm = ttk.Frame(self, padding=20)
+        frm.pack()
+        ttk.Label(frm, text="Wer beginnt?", style="Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+
+        self.coin = tk.Canvas(frm, width=150, height=150, bg=theme.BG, highlightthickness=0)
+        self.coin.grid(row=1, column=0, rowspan=3, padx=(0, 20), pady=(10, 0))
+        self._draw_coin("🪙", 1.0)
+
+        ttk.Label(frm, text="1. Münze werfen", font=("", 10, "bold")).grid(row=1, column=1, sticky="sw", pady=(10, 0))
+        self.coin_btn = ttk.Button(frm, text="Münze werfen", command=self.toss)
+        self.coin_btn.grid(row=2, column=1, sticky="w", pady=4)
+        self.coin_msg = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=self.coin_msg, font=("", 11, "bold"), foreground=theme.RED,
+                  wraplength=260).grid(row=3, column=1, sticky="nw")
+
+        box = ttk.LabelFrame(frm, text="2. Ausbullen oder Münze entscheiden lassen - wer beginnt mit dem Werfen?",
+                             padding=10)
+        box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        ttk.Label(box, text="Beim Ausbullen werfen alle auf das Bull; den Gewinner bzw. den Spieler, "
+                            "der beginnen soll, hier auswählen.", style="Muted.TLabel", wraplength=420).pack(
+            anchor="w", pady=(0, 6))
+        self.var = tk.IntVar(value=-1)
+        for i, name in enumerate(self.names):
+            ttk.Radiobutton(box, text=name, value=i, variable=self.var, command=self._selected).pack(anchor="w", pady=2)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=5, column=0, columnspan=2, sticky="e", pady=(16, 0))
+        ttk.Button(btns, text=f"Überspringen ({self.names[0]} beginnt)", command=self._skip).pack(
+            side="right", padx=(8, 0))
+        self.start_btn = ttk.Button(btns, text="Los geht's", style="Accent.TButton", command=self._start,
+                                    state="disabled")
+        self.start_btn.pack(side="right")
+
+        self.bind("<Return>", lambda e: self._start())
+        self.protocol("WM_DELETE_WINDOW", self._skip)
+        theme.modal(self)
+
+    # ---------------- Münzwurf ----------------
+
+    def _draw_coin(self, text, width_factor):
+        c = self.coin
+        c.delete("all")
+        r, cx, cy = 62, 75, 75
+        half = max(5, r * width_factor)
+        c.create_oval(cx - half, cy - r, cx + half, cy + r, fill="#e0b537", outline="#a67c00", width=4)
+        if width_factor > 0.4:
+            c.create_text(cx, cy, text=text, font=("", 13, "bold"), fill="#5c4300", width=int(2 * half - 14))
+
+    def toss(self):
+        if self._tossing or self._dead:
+            return
+        self._tossing = True
+        self.winner = random.SystemRandom().randrange(len(self.names))
+        self.coin_btn.configure(state="disabled")
+        self.coin_msg.set("")
+        self._step = 0
+        self._animate()
+
+    def _animate(self):
+        if self._dead:
+            return
+        total = 18
+        i = self._step
+        if i >= total:
+            self._draw_coin(self.names[self.winner], 1.0)
+            self.coin_msg.set(f"{self.names[self.winner]} gewinnt den Münzwurf!")
+            self.var.set(self.winner)
+            self._tossing = False
+            self.coin_btn.configure(state="normal", text="Nochmal werfen")
+            self._selected()
+            return
+        self._draw_coin(self.names[i % len(self.names)], abs(math.cos(i * 0.9)))
+        self._step += 1
+        try:
+            self._after = self.after(40 + i * 8, self._animate)
+        except tk.TclError:
+            pass
+
+    # ---------------- Auswahl ----------------
+
+    def _selected(self):
+        self.start_btn.configure(state="normal" if self.var.get() >= 0 else "disabled")
+
+    def _start(self):
+        idx = self.var.get()
+        if idx < 0 or self._tossing:
+            return
+        self.result = idx
+        self.destroy()
+
+    def _skip(self):
+        self.result = 0
+        self.destroy()
+
+    def destroy(self):
+        self._dead = True
+        if self._after:
+            try:
+                self.after_cancel(self._after)
+            except tk.TclError:
+                pass
+        super().destroy()
+
+
+# --------------------------------------------------------------------------
 # Hauptanwendung
 # --------------------------------------------------------------------------
 
@@ -403,6 +529,7 @@ class DartCounterApp:
 
         game_menu = tk.Menu(menubar, tearoff=0)
         game_menu.add_command(label="Neues Spiel...", command=self.new_game)
+        game_menu.add_command(label="Wer beginnt? (Münzwurf / Ausbullen)...", command=self.change_starter)
         game_menu.add_command(label="Leg neu starten", command=self.restart_leg)
         game_menu.add_separator()
         game_menu.add_command(label="Kiosk-Modus (Vollbild) ein/aus  [Passwort]", command=self.toggle_kiosk)
@@ -628,7 +755,28 @@ class DartCounterApp:
 
         self._rebuild_player_panels()
         self.refresh()
+        self.choose_starter()
         self.entry.focus_set()
+
+    def choose_starter(self):
+        """Fragt per Münzwurf bzw. Auswahl, wer mit dem Werfen beginnt (bei mehr als einem Spieler)."""
+        if len(self.players) < 2:
+            return
+        dlg = StartOrderDialog(self.root, [p.name for p in self.players])
+        self.root.wait_window(dlg)
+        starter = dlg.result if dlg.result is not None else 0
+        self.current_idx = self.leg_starter_idx = starter
+        self.log_var.set(f"{self.players[starter].name} beginnt.")
+        self.refresh()
+
+    def change_starter(self):
+        if not self.players:
+            return
+        if self.history:
+            messagebox.showinfo("Startspieler", "Der Startspieler lässt sich nur vor dem ersten Wurf "
+                                                "eines Legs bestimmen.")
+            return
+        self.choose_starter()
 
     def restart_leg(self):
         if not self.players or self.match_over:
