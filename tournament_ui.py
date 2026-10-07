@@ -168,6 +168,11 @@ class NewTournamentDialog(tk.Toplevel):
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="Turnier starten", style="Accent.TButton", command=self._on_ok).pack(side="right")
 
+        theme.tab_moves_focus(self.txt)
+        self.txt.bind("<Control-Return>", lambda e: (self._on_ok(), "break")[1])
+        ttk.Label(outer, text="Tab: nächstes Feld  ·  ↑ ↓ Modus wählen  ·  Strg+Enter: Turnier starten  ·  Esc: abbrechen",
+                  style="Muted.TLabel").grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.bind("<Escape>", lambda e: self.destroy())
         self._mode_changed()
         theme.modal(self)
         self.txt.focus_set()
@@ -268,7 +273,13 @@ class ResultDialog(tk.Toplevel):
         btns.grid(row=5, column=0, columnspan=3, pady=(14, 0), sticky="e")
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="Speichern", style="Accent.TButton", command=self._ok).pack(side="right")
+        ttk.Label(frm, text="↑ ↓ Sieger wählen  ·  Tab: Legs eintragen  ·  Enter: speichern  ·  Esc: abbrechen",
+                  style="Muted.TLabel").grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        theme.bind_dialog_keys(self, ok=self._ok)
         theme.modal(self)
+        first = next((c for c in frm.winfo_children() if c.winfo_class() == "TRadiobutton"), None)
+        if first:
+            first.focus_set()
 
     def _ok(self):
         if not self.winner.get():
@@ -346,31 +357,35 @@ class MasterWindow(tk.Toplevel):
         self._build_ko_tab()
 
         st_frame = ttk.LabelFrame(side, text="Stationen", padding=8)
-        st_frame.pack(fill="x")
         self.station_labels = []
         for n in range(1, tournament.stations + 1):
             lbl = tk.Label(st_frame, text="", justify="left", anchor="w", wraplength=280, bg=theme.BG)
-            lbl.pack(fill="x", pady=2)
+            lbl.pack(fill="x", pady=1)
             self.station_labels.append(lbl)
 
         sel_frame = ttk.LabelFrame(side, text="Ausgewähltes Match", padding=8)
-        sel_frame.pack(fill="x", pady=(12, 0))
         self.sel_var = tk.StringVar(value="Match anklicken")
         ttk.Label(sel_frame, textvariable=self.sel_var, wraplength=280, justify="left").pack(fill="x", pady=(0, 8))
-        self.btn_result = ttk.Button(sel_frame, text="Ergebnis eintragen / korrigieren...",
+        self.btn_result = ttk.Button(sel_frame, text="Ergebnis eintragen / korrigieren  [Enter]",
                                      command=self.edit_result, state="disabled")
         self.btn_result.pack(fill="x", pady=2)
-        self.btn_release = ttk.Button(sel_frame, text="Match an Station freigeben",
+        self.btn_release = ttk.Button(sel_frame, text="Match freigeben  [F]",
                                       command=self.release_match, state="disabled")
         self.btn_release.pack(fill="x", pady=2)
-        self.btn_reset = ttk.Button(sel_frame, text="Ergebnis zurücksetzen",
+        self.btn_reset = ttk.Button(sel_frame, text="Ergebnis zurücksetzen  [R]",
                                     command=self.reset_match, state="disabled")
         self.btn_reset.pack(fill="x", pady=2)
 
-        ttk.Label(side, style="Muted.TLabel", wraplength=280, justify="left",
-                  text="Ergebnisse von den Stationen erscheinen automatisch. "
-                       "Der Turnierstand wird laufend gespeichert.").pack(fill="x", pady=(12, 0))
+        hint = ttk.Label(side, style="Muted.TLabel", wraplength=280, justify="left",
+                         text="Tasten: ← ↑ ↓ → Match wählen · Enter Ergebnis · F freigeben · R zurücksetzen · "
+                              "Strg+1 / Strg+2 Ansicht · Strg+W schließen")
+        # unten verankern (zuerst packen), damit die Buttons bei wenig Platz sichtbar bleiben
+        hint.pack(side="bottom", fill="x", pady=(8, 0))
+        sel_frame.pack(side="bottom", fill="x", pady=(10, 0))
+        st_frame.pack(side="top", fill="both", expand=True)
 
+        self._bind_keys()
+        self.nb.bind("<<NotebookTabChanged>>", lambda e: self._focus_view())
         self.protocol("WM_DELETE_WINDOW", self._close)
         _bring_to_front(self)
         self._tick()
@@ -429,6 +444,8 @@ class MasterWindow(tk.Toplevel):
                 games.tag_configure(status, background=bg)
             games.pack(fill="x", pady=(8, 0))
             games.bind("<<TreeviewSelect>>", lambda e, tree=games: self._on_group_select(tree))
+            games.bind("<Left>", lambda e, tree=games: (self._on_group_key(tree, -1), "break")[1])
+            games.bind("<Right>", lambda e, tree=games: (self._on_group_key(tree, 1), "break")[1])
             games.bind("<Double-Button-1>", lambda e: self.edit_result())
             self.group_trees[gi] = (table, games)
 
@@ -444,6 +461,87 @@ class MasterWindow(tk.Toplevel):
         self.selected = sel[0]
         self._last_version = None  # Markierung im KO-Baum nachziehen
         self._update_selection(self.t.snapshot())
+
+    # ---------------- Tastatur ----------------
+
+    def _bind_keys(self):
+        self.bind("<Return>", lambda e: (self.edit_result(), "break")[1])
+        self.bind("<KP_Enter>", lambda e: (self.edit_result(), "break")[1])
+        for k in ("f", "F"):
+            self.bind(f"<KeyPress-{k}>", lambda e: (self.release_match(), "break")[1])
+        for k in ("r", "R"):
+            self.bind(f"<KeyPress-{k}>", lambda e: (self.reset_match(), "break")[1])
+        self.bind("<Control-w>", lambda e: (self._close(), "break")[1])
+        self.bind("<Control-Key-1>", lambda e: (self._show_tab(self.groups_tab or self.ko_tab), "break")[1])
+        self.bind("<Control-Key-2>", lambda e: (self._show_tab(self.ko_tab), "break")[1])
+        for key, dx, dy in (("Left", -1, 0), ("Right", 1, 0), ("Up", 0, -1), ("Down", 0, 1)):
+            self.canvas.bind(f"<{key}>", lambda e, a=dx, b=dy: (self._ko_move(a, b), "break")[1])
+        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set(), add="+")
+
+    def _show_tab(self, tab):
+        self.nb.select(tab)
+        self._focus_view()
+
+    def _focus_view(self):
+        """Fokus in die gerade sichtbare Ansicht, damit die Pfeiltasten dort wirken."""
+        if self.groups_tab and self.nb.select() == str(self.groups_tab):
+            games = self.group_trees[0][1]
+            self._focus_games(games)
+        else:
+            self.canvas.focus_set()
+            if self.selected not in self._pos and self._pos:
+                self._select_first_ko()
+
+    def _focus_games(self, games):
+        games.focus_set()
+        rows = games.get_children()
+        if rows and not games.selection():
+            games.selection_set(rows[0])
+            games.focus(rows[0])
+
+    def _on_group_key(self, tree, step):
+        order = [g[1] for _, g in sorted(self.group_trees.items())]
+        if tree in order:
+            self._focus_games(order[(order.index(tree) + step) % len(order)])
+
+    def _select_first_ko(self):
+        first = min(self._pos.items(), key=lambda kv: (kv[1][0], kv[1][1]))[0]
+        self.select(first)
+
+    def _ko_move(self, dx, dy):
+        """Pfeiltasten im Turnierbaum: zum nächsten Match in der gewünschten Richtung springen."""
+        if not self._pos:
+            return
+        if self.selected not in self._pos:
+            self._select_first_ko()
+            return
+        cx, cy = self._pos[self.selected]
+        best, best_key = None, None
+        for mid, (x, y) in self._pos.items():
+            if mid == self.selected:
+                continue
+            if dx and ((x - cx) * dx <= 1):
+                continue
+            if dy and (abs(x - cx) > 1 or (y - cy) * dy <= 1):
+                continue
+            key = (abs(x - cx), abs(y - cy)) if dx else abs(y - cy)
+            if best_key is None or key < best_key:
+                best, best_key = mid, key
+        if best:
+            self.select(best)
+            self._scroll_to(best)
+
+    def _scroll_to(self, match_id):
+        x, y = self._pos[match_id]
+        region = self.canvas.cget("scrollregion").split() if self.canvas.cget("scrollregion") else None
+        if not region or len(region) != 4:
+            return
+        total_w, total_h = float(region[2]), float(region[3])
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        if total_w > w:
+            self.canvas.xview_moveto(max(0.0, min(1.0, (x + BOX_W / 2 - w / 2) / total_w)))
+        if total_h > h:
+            self.canvas.yview_moveto(max(0.0, min(1.0, (y - h / 2) / total_h)))
 
     # ---------------- Aktualisierung ----------------
 
@@ -481,9 +579,9 @@ class MasterWindow(tk.Toplevel):
             running = next((m for m in snap["matches"] if m["station"] == n), None)
             line1 = f"Station {n}   {'● online' if online else '○ nicht verbunden'}"
             if running:
-                line2 = f"\nspielt: {running['p'][0]} - {running['p'][1]}\n({running['label']})"
+                line2 = f"   ▶ {running['p'][0]} - {running['p'][1]}"
             else:
-                line2 = "\nfrei" if online else ""
+                line2 = "   frei" if online else ""
             lbl.configure(text=line1 + line2, fg=theme.GREEN if online else "#777777")
 
     def _update_selection(self, snap):
@@ -747,7 +845,7 @@ class ConnectDialog(tk.Toplevel):
         btns.grid(row=4, column=0, columnspan=2, pady=(14, 0), sticky="e")
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="Verbinden", style="Accent.TButton", command=self._ok).pack(side="right")
-        self.bind("<Return>", lambda ev: self._ok())
+        theme.bind_dialog_keys(self, ok=self._ok)
         theme.modal(self)
         e.focus_set()
         self.search()
@@ -825,10 +923,12 @@ class StationPanel(tk.Toplevel):
         self._after = None
         self._busy = False
         self._dead = False
+        self._focused_once = False
         self._matches = {}
 
         self.title(f"Turnier-Station {client.station}")
-        self.geometry("700x520")
+        self.geometry("780x580")
+        self.minsize(640, 420)
         self.transient(master)
         theme.set_window_icon(self)
 
@@ -840,12 +940,23 @@ class StationPanel(tk.Toplevel):
         self.status_lbl = tk.Label(self, textvariable=self.status_var, anchor="w", padx=14, bg=theme.BG)
         self.status_lbl.pack(fill="x")
 
-        ttk.Label(self, text="Spielbereite Matches - eins auswählen und hier spielen:",
-                  padding=(14, 10, 14, 4)).pack(fill="x")
+        # Die Button-Leiste zuerst (unten) packen, damit sie bei wenig Platz nicht zusammengedrückt wird
+        btns = ttk.Frame(self, padding=14)
+        btns.pack(side="bottom", fill="x")
+        self.play_btn = ttk.Button(btns, text="Match spielen  [Enter]", style="Accent.TButton",
+                                   command=self.play_selected)
+        self.play_btn.pack(side="left")
+        ttk.Button(btns, text="Aktualisieren  [F5]", command=self.refresh_now).pack(side="left", padx=8)
+        ttk.Button(btns, text="Trennen  [Esc]", command=self._close).pack(side="right")
+        ttk.Label(self, text="↑ ↓ Match wählen   ·   Enter: spielen   ·   F5: aktualisieren   ·   Esc: schließen",
+                  style="Muted.TLabel", padding=(14, 0, 14, 0)).pack(side="bottom", fill="x")
+
+        ttk.Label(self, text="Spielbereite Matches - eins auswählen und spielen:",
+                  padding=(14, 10, 14, 4)).pack(side="top", fill="x")
         tree_frame = ttk.Frame(self, padding=(14, 0))
-        tree_frame.pack(fill="both", expand=True)
+        tree_frame.pack(side="top", fill="both", expand=True)
         self.tree = ttk.Treeview(tree_frame, columns=("round", "players", "status"), show="headings",
-                                 selectmode="browse", height=10)
+                                 selectmode="browse", height=6)
         self.tree.heading("round", text="Runde")
         self.tree.heading("players", text="Spieler")
         self.tree.heading("status", text="Status")
@@ -860,18 +971,16 @@ class StationPanel(tk.Toplevel):
         self.tree.tag_configure("busy", foreground="#888888")
         self.tree.bind("<Double-Button-1>", lambda e: self.play_selected())
 
-        btns = ttk.Frame(self, padding=14)
-        btns.pack(fill="x")
-        self.play_btn = ttk.Button(btns, text="Ausgewähltes Match hier spielen", style="Accent.TButton",
-                                   command=self.play_selected)
-        self.play_btn.pack(side="left")
-        ttk.Button(btns, text="Aktualisieren", command=self.refresh_now).pack(side="left", padx=8)
-        ttk.Button(btns, text="Trennen", command=self.destroy).pack(side="right")
+        self.bind("<Return>", lambda e: (self.play_selected(), "break")[1])
+        self.bind("<KP_Enter>", lambda e: (self.play_selected(), "break")[1])
+        self.bind("<F5>", lambda e: self.refresh_now())
+        self.bind("<Escape>", lambda e: self._close())
 
         self.protocol("WM_DELETE_WINDOW", self._close)
         self._apply_state(state)
         self._schedule()
         _bring_to_front(self)
+        self.after(150, self.focus_tree)
 
     # ---------------- Aktualisierung ----------------
 
@@ -966,9 +1075,25 @@ class StationPanel(tk.Toplevel):
             self.tree.selection_set(selected[0])
         elif mine:
             self.tree.selection_set(mine[0]["id"])
+        elif self._matches:
+            self.tree.selection_set(next(iter(self._matches)))
+        self._focus_row()
 
         if state.get("champion"):
             self.status_var.set(f"🏆 Turnier beendet - Sieger: {state['champion']}")
+
+    def _focus_row(self):
+        """Fokus in die Liste, damit sofort per Pfeiltasten gewählt werden kann."""
+        sel = self.tree.selection()
+        if sel:
+            self.tree.focus(sel[0])
+        if not self._focused_once and self.winfo_viewable():
+            self._focused_once = True
+            self.tree.focus_set()
+
+    def focus_tree(self):
+        self._focused_once = False
+        self._focus_row()
 
     # ---------------- Match starten ----------------
 

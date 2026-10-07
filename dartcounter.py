@@ -245,7 +245,7 @@ class NewGameDialog(tk.Toplevel):
         ttk.Button(btns, text="Spiel starten", style="Accent.TButton", command=self._on_start).pack(side="left", padx=5)
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="left", padx=5)
 
-        self.bind("<Return>", lambda e: self._on_start())
+        theme.bind_dialog_keys(self, ok=self._on_start)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
 
     def _build_name_fields(self):
@@ -334,6 +334,7 @@ class SettingsDialog(tk.Toplevel):
         ttk.Button(btns, text="Speichern", style="Accent.TButton", command=self._save).pack(side="left", padx=5)
         ttk.Button(btns, text="Zurücksetzen", command=self._reset_defaults).pack(side="left", padx=5)
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="left", padx=5)
+        theme.bind_dialog_keys(self, ok=self._save)
 
     def _reset_defaults(self):
         for var, val in zip(self.vars, DEFAULT_FKEYS):
@@ -409,9 +410,16 @@ class StartOrderDialog(tk.Toplevel):
                                     state="disabled")
         self.start_btn.pack(side="right")
 
-        self.bind("<Return>", lambda e: self._start())
+        ttk.Label(frm, text="M: Münze werfen  ·  1-4: Spieler wählen  ·  ↑ ↓: wechseln  ·  Enter: los  ·  Esc: überspringen",
+                  style="Muted.TLabel").grid(row=6, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        theme.bind_dialog_keys(self, ok=self._start, cancel=self._skip)
+        for k in ("m", "M", "space"):
+            self.bind(f"<KeyPress-{k}>", lambda e: (self.toss(), "break")[1])
+        for i in range(len(self.names)):
+            self.bind(f"<KeyPress-{i + 1}>", lambda e, idx=i: self._pick(idx))
         self.protocol("WM_DELETE_WINDOW", self._skip)
         theme.modal(self)
+        self.coin_btn.focus_set()
 
     # ---------------- Münzwurf ----------------
 
@@ -456,6 +464,12 @@ class StartOrderDialog(tk.Toplevel):
 
     # ---------------- Auswahl ----------------
 
+    def _pick(self, idx):
+        if not self._tossing:
+            self.var.set(idx)
+            self._selected()
+        return "break"
+
     def _selected(self):
         self.start_btn.configure(state="normal" if self.var.get() >= 0 else "disabled")
 
@@ -478,6 +492,60 @@ class StartOrderDialog(tk.Toplevel):
             except tk.TclError:
                 pass
         super().destroy()
+
+
+# --------------------------------------------------------------------------
+# Hauptmenü per Tastatur
+# --------------------------------------------------------------------------
+
+class MainMenuDialog(tk.Toplevel):
+    def __init__(self, master, items):
+        super().__init__(master)
+        self.master_win = master
+        self.items = items
+        self.title("Menü")
+        self.resizable(False, False)
+        self.transient(master)
+        theme.set_window_icon(self)
+
+        frm = ttk.Frame(self, padding=16)
+        frm.pack()
+        ttk.Label(frm, text="Menü", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frm, text="↑ ↓ wählen  ·  Enter ausführen  ·  1-9 direkt  ·  Esc schließen",
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
+        self.tree = ttk.Treeview(frm, columns=("group", "label", "keys"), show="headings", selectmode="browse",
+                                 height=min(len(items), 14), style="Big.Treeview")
+        self.tree.heading("group", text="Bereich")
+        self.tree.heading("label", text="Aktion")
+        self.tree.heading("keys", text="Tastenkürzel")
+        self.tree.column("group", width=130)
+        self.tree.column("label", width=420)
+        self.tree.column("keys", width=170)
+        for i, (group, label, keys, _) in enumerate(items):
+            self.tree.insert("", "end", iid=str(i), values=(group, f"{i + 1}.  {label}" if i < 9 else label, keys))
+        self.tree.pack()
+        self.tree.selection_set("0")
+        self.tree.focus("0")
+
+        self.tree.bind("<Return>", lambda e: (self._run(), "break")[1])
+        self.tree.bind("<Double-Button-1>", lambda e: self._run())
+        for i in range(min(len(items), 9)):
+            self.bind(f"<KeyPress-{i + 1}>", lambda e, idx=i: self._run(idx))
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Menu>", lambda e: self.destroy())
+        theme.modal(self)
+        self.tree.focus_set()
+
+    def _run(self, idx=None):
+        if idx is None:
+            sel = self.tree.selection()
+            if not sel:
+                return
+            idx = int(sel[0])
+        cmd = self.items[idx][3]
+        parent = self.master_win
+        self.destroy()
+        parent.after(80, cmd)   # erst nach dem Schließen ausführen, damit Dialoge sauber vorne landen
 
 
 # --------------------------------------------------------------------------
@@ -524,39 +592,53 @@ class DartCounterApp:
 
     # ---------------- Menü ----------------
 
+    def _menu_structure(self):
+        """(Menüname, [(Beschriftung, Tastenkürzel, Funktion) | None für Trennlinie])"""
+        return [
+            ("Spiel", [
+                ("Neues Spiel...", "Strg+N", self.new_game),
+                ("Wer beginnt? (Münzwurf / Ausbullen)...", "Strg+W", self.change_starter),
+                ("Leg neu starten", "Strg+R", self.restart_leg),
+                ("Letzte Eingabe rückgängig (Undo)", "Strg+Z", self.undo),
+                None,
+                ("Kiosk-Modus (Vollbild) ein/aus  [Passwort]", "Strg+Umschalt+K", self.toggle_kiosk),
+                ("Beenden  [Passwort im Kiosk-Modus]", "Strg+Q", self.request_quit),
+            ]),
+            ("Turnier", [
+                ("Neues Turnier erstellen  [Passwort]...", "Strg+Umschalt+N", self.new_tournament),
+                ("Gespeichertes Turnier fortsetzen  [Passwort]", "Strg+Umschalt+O", self.resume_tournament),
+                ("Turnierleiter-Fenster anzeigen", "Strg+Umschalt+L", self.show_master),
+                None,
+                ("Als Station verbinden...", "Strg+Umschalt+S", self.connect_station),
+                ("Station-Fenster anzeigen", "Strg+Umschalt+P", self.show_station_panel),
+            ]),
+            ("Einstellungen", [
+                ("F1-F12 bearbeiten...", "", self.open_settings),
+                ("Turnierleiter-Passwort ändern...", "", self.change_password),
+            ]),
+            ("Hilfe", [
+                ("Tastenkürzel", "", self.show_help),
+            ]),
+        ]
+
     def _build_menu(self):
         menubar = tk.Menu(self.root)
-
-        game_menu = tk.Menu(menubar, tearoff=0)
-        game_menu.add_command(label="Neues Spiel...", command=self.new_game)
-        game_menu.add_command(label="Wer beginnt? (Münzwurf / Ausbullen)...", command=self.change_starter)
-        game_menu.add_command(label="Leg neu starten", command=self.restart_leg)
-        game_menu.add_separator()
-        game_menu.add_command(label="Kiosk-Modus (Vollbild) ein/aus  [Passwort]", command=self.toggle_kiosk)
-        game_menu.add_command(label="Beenden  [Passwort im Kiosk-Modus]", command=self.request_quit)
-        menubar.add_cascade(label="Spiel", menu=game_menu)
-
-        tourn_menu = tk.Menu(menubar, tearoff=0)
-        tourn_menu.add_command(label="Neues Turnier erstellen (Turnierleiter)  [Passwort]...",
-                               command=self.new_tournament)
-        tourn_menu.add_command(label="Gespeichertes Turnier fortsetzen  [Passwort]",
-                               command=self.resume_tournament)
-        tourn_menu.add_command(label="Turnierleiter-Fenster anzeigen", command=self.show_master)
-        tourn_menu.add_separator()
-        tourn_menu.add_command(label="Als Station verbinden...", command=self.connect_station)
-        tourn_menu.add_command(label="Station-Fenster anzeigen", command=self.show_station_panel)
-        menubar.add_cascade(label="Turnier", menu=tourn_menu)
-
-        settings_menu = tk.Menu(menubar, tearoff=0)
-        settings_menu.add_command(label="F1-F12 bearbeiten...", command=self.open_settings)
-        settings_menu.add_command(label="Turnierleiter-Passwort ändern...", command=self.change_password)
-        menubar.add_cascade(label="Einstellungen", menu=settings_menu)
-
-        help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(label="Tastenkürzel", command=self.show_help)
-        menubar.add_cascade(label="Hilfe", menu=help_menu)
-
+        for name, entries in self._menu_structure():
+            menu = tk.Menu(menubar, tearoff=0)
+            for entry in entries:
+                if entry is None:
+                    menu.add_separator()
+                else:
+                    label, keys, cmd = entry
+                    menu.add_command(label=label, accelerator=keys, command=cmd)
+            menubar.add_cascade(label=name, menu=menu, underline=0)   # Alt+S, Alt+T, Alt+E, Alt+H
         self.root.config(menu=menubar)
+
+    def open_main_menu(self):
+        """Hauptmenü zum Durchblättern mit Pfeiltasten (für die Bedienung ohne Maus)."""
+        items = [(group, label, keys, cmd) for group, entries in self._menu_structure()
+                 for entry in entries if entry for (label, keys, cmd) in [entry]]
+        MainMenuDialog(self.root, items)
 
     def show_help(self):
         messagebox.showinfo(
@@ -565,6 +647,14 @@ class DartCounterApp:
             "Enter: eingegebenen Zahlenwert bestätigen\n"
             "Strg+Z: letzte Eingabe rückgängig machen\n"
             "Backspace/Entf im Zahlenfeld: löscht die Eingabe\n\n"
+            "Ohne Maus bedienbar:\n"
+            "Esc: Hauptmenü (mit Pfeiltasten wählen, Enter, Esc)\n"
+            "Strg+N: Neues Spiel   Strg+W: Wer beginnt?   Strg+R: Leg neu\n"
+            "Strg+Q: Beenden   Strg+Umschalt+K: Kiosk ein/aus\n"
+            "Strg+Umschalt+N / O / L: Turnier neu / fortsetzen / Leiter-Fenster\n"
+            "Strg+Umschalt+S / P: Station verbinden / Station-Fenster\n"
+            "Alt+S, Alt+T, Alt+E, Alt+H: Menüleiste öffnen\n"
+            "In Fenstern: Tab / Pfeiltasten wechseln, Enter bestätigt, Esc bricht ab\n\n"
             "Kiosk-Modus: Menü Spiel -> Kiosk-Modus ein/aus (Passwort nötig).\n"
             "Zum Testen im Fenster starten: python3 dartcounter.py --windowed",
         )
@@ -613,6 +703,7 @@ class DartCounterApp:
         logo = theme.load_image("logo_small.png")
         if logo:
             ttk.Label(header, image=logo).pack(side="left", padx=(0, 14))
+        ttk.Button(header, text="☰  Menü  [Esc]", command=self.open_main_menu).pack(side="right")
         titles = ttk.Frame(header)
         titles.pack(side="left")
         ttk.Label(titles, text="TSV Feichten - Dartcounter", style="Title.TLabel").pack(anchor="w")
@@ -661,6 +752,16 @@ class DartCounterApp:
         self.send_btn.pack(side="right", padx=4)
 
         # Key-Bindings
+        shortcuts = {
+            "<Escape>": self.open_main_menu, "<Menu>": self.open_main_menu,
+            "<Control-n>": self.new_game, "<Control-w>": self.change_starter, "<Control-r>": self.restart_leg,
+            "<Control-q>": self.request_quit, "<Control-K>": self.toggle_kiosk,
+            "<Control-N>": self.new_tournament, "<Control-O>": self.resume_tournament,
+            "<Control-L>": self.show_master, "<Control-S>": self.connect_station,
+            "<Control-P>": self.show_station_panel,
+        }
+        for seq, fn in shortcuts.items():
+            self.root.bind(seq, lambda e, f=fn: (f(), "break")[1])
         self.entry.bind("<Return>", lambda e: self.submit_manual())
         for i in range(1, 13):
             self.root.bind(f"<F{i}>", lambda e, idx=i - 1: self.submit_fkey(idx))
@@ -1064,6 +1165,7 @@ class DartCounterApp:
             self.station_panel.deiconify()
             self.station_panel.lift()
             self.station_panel.refresh_now()
+            self.station_panel.focus_tree()
 
     def send_tournament_result(self):
         if not self.tourn or not self.match_over or self.tourn["sending"]:

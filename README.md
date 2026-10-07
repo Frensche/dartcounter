@@ -70,6 +70,31 @@ Programm nicht sperren - dafür müsste der Desktop selbst als Kiosk konfigurier
 - Menü *Spiel*: neues Spiel, Leg neu starten, Beenden
 - Menü *Einstellungen*: F1–F12 bearbeiten
 
+## Bedienung ohne Maus (nur Tastatur / Touchpad-frei)
+
+Alles lässt sich mit der Tastatur bedienen. Der Fokus wird durch einen **gelben Rahmen**
+bzw. roten Eingabefeld-Rand angezeigt.
+
+| Taste | Wirkung |
+|---|---|
+| `Esc` (Hauptfenster) | **Hauptmenü** öffnen: mit ↑ ↓ wählen, `Enter` führt aus, `1`-`9` wählt direkt |
+| `Strg+N` / `Strg+W` / `Strg+R` | Neues Spiel / Wer beginnt? / Leg neu starten |
+| `Strg+Z` | Letzte Eingabe rückgängig |
+| `Strg+Q` / `Strg+Umschalt+K` | Beenden / Kiosk-Modus ein-aus (Passwort) |
+| `Strg+Umschalt+N` / `O` / `L` | Turnier neu / fortsetzen / Turnierleiter-Fenster |
+| `Strg+Umschalt+S` / `P` | Als Station verbinden / Station-Fenster |
+| `Alt+S`, `Alt+T`, `Alt+E`, `Alt+H` | Menüleiste öffnen (dann Pfeiltasten, `Enter`) |
+| `Tab` / `Umschalt+Tab` | Nächstes / vorheriges Feld oder Button |
+| `Enter` / `Esc` | In jedem Fenster: bestätigen / abbrechen (auf einem Button: diesen auslösen) |
+| `↑ ↓ ← →` | Auswahlpunkte wechseln, Listeneinträge wählen, Zahlenfelder ändern |
+| Münzwurf-Dialog | `M` oder Leertaste: Münze werfen, `1`-`4`: Spieler wählen, `Enter`: los |
+| Station-Fenster | `↑ ↓` Match wählen, `Enter` spielen, `F5` aktualisieren, `Esc` schließen |
+| Turnierleiter-Fenster | `← ↑ ↓ →` Match im Baum/in der Gruppe wählen (in Gruppen: ←/→ wechselt die Gruppe), `Enter` Ergebnis, `F` freigeben, `R` zurücksetzen, `Strg+1` / `Strg+2` Gruppen-/KO-Ansicht, `Strg+W` schließen |
+| Neues Turnier (Spielerliste) | `Tab` springt aus dem Textfeld weiter, `Strg+Enter` startet das Turnier |
+
+Hinweis: `F10`-`F12` sind als Score-Tasten belegt, deshalb gibt es kein `F10`-Menü; die
+Menüleiste erreichst du über `Alt+Buchstabe` oder bequemer über `Esc`.
+
 ## Turniermodus (mehrere Rechner im Netzwerk)
 
 Ein Rechner ist **Turnierleiter** (hält Turnierbaum bzw. Gruppentabellen und startet einen

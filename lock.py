@@ -66,8 +66,7 @@ class PasswordDialog(tk.Toplevel):
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="Entsperren", style="Accent.TButton", command=self._check).pack(side="right")
 
-        self.bind("<Return>", lambda e: self._check())
-        self.bind("<Escape>", lambda e: self.destroy())
+        theme.bind_dialog_keys(self, ok=self._check)
         theme.modal(self)
         self.entry.focus_set()
 
@@ -110,7 +109,7 @@ class ChangePasswordDialog(tk.Toplevel):
         btns.grid(row=4, column=0, columnspan=2, pady=(12, 0), sticky="e")
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="Speichern", style="Accent.TButton", command=self._save).pack(side="right")
-        self.bind("<Return>", lambda e: self._save())
+        theme.bind_dialog_keys(self, ok=self._save)
         theme.modal(self)
 
     def _save(self):
