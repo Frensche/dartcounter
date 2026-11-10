@@ -72,7 +72,6 @@ class NewTournamentDialog(tk.Toplevel):
     def __init__(self, master, cfg):
         super().__init__(master)
         self.title("Neues Turnier")
-        self.resizable(False, False)
         self.result = None
         self.transient(master)
         theme.set_window_icon(self)
@@ -174,6 +173,7 @@ class NewTournamentDialog(tk.Toplevel):
                   style="Muted.TLabel").grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.bind("<Escape>", lambda e: self.destroy())
         self._mode_changed()
+        theme.place_dialog(self)
         theme.modal(self)
         self.txt.focus_set()
 
@@ -246,7 +246,6 @@ class ResultDialog(tk.Toplevel):
     def __init__(self, master, match):
         super().__init__(master)
         self.title("Ergebnis eintragen")
-        self.resizable(False, False)
         self.result = None
         self.transient(master)
         theme.set_window_icon(self)
@@ -276,6 +275,7 @@ class ResultDialog(tk.Toplevel):
         ttk.Label(frm, text="↑ ↓ Sieger wählen  ·  Tab: Legs eintragen  ·  Enter: speichern  ·  Esc: abbrechen",
                   style="Muted.TLabel").grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
         theme.bind_dialog_keys(self, ok=self._ok)
+        theme.place_dialog(self)
         theme.modal(self)
         first = next((c for c in frm.winfo_children() if c.winfo_class() == "TRadiobutton"), None)
         if first:
@@ -324,7 +324,7 @@ class MasterWindow(tk.Toplevel):
         self.group_trees = {}   # Gruppenindex -> (Tabelle, Spiele)
 
         self.title(f"Turnierleiter - {tournament.name}")
-        self.geometry("1280x760")
+        theme.fit_window(self, 1280, 760, (900, 560))
         self.transient(master)
         theme.set_window_icon(self)
 
@@ -807,7 +807,6 @@ class ConnectDialog(tk.Toplevel):
     def __init__(self, master, cfg):
         super().__init__(master)
         self.title("Als Station verbinden")
-        self.resizable(False, False)
         self.result = None
         self._dead = False
         self._found = []
@@ -827,7 +826,7 @@ class ConnectDialog(tk.Toplevel):
         self.search_btn = ttk.Button(search, text="Neu suchen", command=self.search)
         self.search_btn.grid(row=0, column=1, padx=(8, 0))
         self.status_var = tk.StringVar()
-        ttk.Label(search, textvariable=self.status_var, style="Muted.TLabel").grid(
+        ttk.Label(search, textvariable=self.status_var, style="Muted.TLabel", wraplength=380).grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         ttk.Label(frm, text="IP-Adresse des Turnierleiters:").grid(row=1, column=0, sticky="w", **pad)
@@ -846,6 +845,7 @@ class ConnectDialog(tk.Toplevel):
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="Verbinden", style="Accent.TButton", command=self._ok).pack(side="right")
         theme.bind_dialog_keys(self, ok=self._ok)
+        theme.place_dialog(self)
         theme.modal(self)
         e.focus_set()
         self.search()
@@ -927,8 +927,7 @@ class StationPanel(tk.Toplevel):
         self._matches = {}
 
         self.title(f"Turnier-Station {client.station}")
-        self.geometry("780x580")
-        self.minsize(640, 420)
+        theme.fit_window(self, 780, 580)
         self.transient(master)
         theme.set_window_icon(self)
 

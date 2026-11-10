@@ -44,7 +44,6 @@ class PasswordDialog(tk.Toplevel):
         self.cfg = cfg
         self.ok = False
         self.title("Passwort erforderlich")
-        self.resizable(False, False)
         self.transient(master)
         theme.set_window_icon(self)
 
@@ -67,6 +66,7 @@ class PasswordDialog(tk.Toplevel):
         ttk.Button(btns, text="Entsperren", style="Accent.TButton", command=self._check).pack(side="right")
 
         theme.bind_dialog_keys(self, ok=self._check)
+        theme.place_dialog(self)
         theme.modal(self)
         self.entry.focus_set()
 
@@ -91,7 +91,6 @@ class ChangePasswordDialog(tk.Toplevel):
         super().__init__(master)
         self.cfg, self.save = cfg, save
         self.title("Passwort ändern")
-        self.resizable(False, False)
         self.transient(master)
         theme.set_window_icon(self)
 
@@ -103,13 +102,14 @@ class ChangePasswordDialog(tk.Toplevel):
             var = tk.StringVar()
             ttk.Entry(frm, textvariable=var, show="•", width=24).grid(row=i, column=1, pady=4)
             self.vars.append(var)
-        self.msg = tk.Label(frm, text="", fg="#b00020", bg=theme.BG)
+        self.msg = tk.Label(frm, text="", fg="#b00020", bg=theme.BG, wraplength=330, justify="left")
         self.msg.grid(row=3, column=0, columnspan=2, sticky="w")
         btns = ttk.Frame(frm)
         btns.grid(row=4, column=0, columnspan=2, pady=(12, 0), sticky="e")
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="Speichern", style="Accent.TButton", command=self._save).pack(side="right")
         theme.bind_dialog_keys(self, ok=self._save)
+        theme.place_dialog(self)
         theme.modal(self)
 
     def _save(self):

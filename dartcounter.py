@@ -195,12 +195,10 @@ class NewGameDialog(tk.Toplevel):
     def __init__(self, master, cfg):
         super().__init__(master)
         self.title("Neues Spiel")
-        self.resizable(False, False)
         self.cfg = cfg
         self.result = None
         self.transient(master)
         theme.set_window_icon(self)
-        theme.modal(self)
 
         pad = {"padx": 10, "pady": 6}
 
@@ -247,6 +245,8 @@ class NewGameDialog(tk.Toplevel):
 
         theme.bind_dialog_keys(self, ok=self._on_start)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
+        theme.place_dialog(self)
+        theme.modal(self)
 
     def _build_name_fields(self):
         for child in self.name_frame.winfo_children():
@@ -274,6 +274,7 @@ class NewGameDialog(tk.Toplevel):
 
     def _update_name_fields(self):
         self._build_name_fields()
+        theme.place_dialog(self)   # Fenster an die neue Zahl der Spielerzeilen anpassen
 
     def _on_start(self):
         names = [v.get().strip() or f"Spieler {i+1}" for i, v in enumerate(self.name_vars)]
@@ -302,12 +303,10 @@ class SettingsDialog(tk.Toplevel):
     def __init__(self, master, cfg, on_saved):
         super().__init__(master)
         self.title("Einstellungen - F1 bis F12 bearbeiten")
-        self.resizable(False, False)
         self.cfg = cfg
         self.on_saved = on_saved
         self.transient(master)
         theme.set_window_icon(self)
-        theme.modal(self)
 
         frm = ttk.Frame(self, padding=15)
         frm.grid(sticky="nsew")
@@ -335,6 +334,8 @@ class SettingsDialog(tk.Toplevel):
         ttk.Button(btns, text="Zurücksetzen", command=self._reset_defaults).pack(side="left", padx=5)
         ttk.Button(btns, text="Abbrechen", command=self.destroy).pack(side="left", padx=5)
         theme.bind_dialog_keys(self, ok=self._save)
+        theme.place_dialog(self)
+        theme.modal(self)
 
     def _reset_defaults(self):
         for var, val in zip(self.vars, DEFAULT_FKEYS):
@@ -367,7 +368,6 @@ class StartOrderDialog(tk.Toplevel):
     def __init__(self, master, names):
         super().__init__(master)
         self.title("Wer beginnt?")
-        self.resizable(False, False)
         self.names = list(names)
         self.result = None
         self.winner = None
@@ -418,6 +418,7 @@ class StartOrderDialog(tk.Toplevel):
         for i in range(len(self.names)):
             self.bind(f"<KeyPress-{i + 1}>", lambda e, idx=i: self._pick(idx))
         self.protocol("WM_DELETE_WINDOW", self._skip)
+        theme.place_dialog(self)
         theme.modal(self)
         self.coin_btn.focus_set()
 
@@ -504,7 +505,6 @@ class MainMenuDialog(tk.Toplevel):
         self.master_win = master
         self.items = items
         self.title("Menü")
-        self.resizable(False, False)
         self.transient(master)
         theme.set_window_icon(self)
 
@@ -533,6 +533,7 @@ class MainMenuDialog(tk.Toplevel):
             self.bind(f"<KeyPress-{i + 1}>", lambda e, idx=i: self._run(idx))
         self.bind("<Escape>", lambda e: self.destroy())
         self.bind("<Menu>", lambda e: self.destroy())
+        theme.place_dialog(self)
         theme.modal(self)
         self.tree.focus_set()
 

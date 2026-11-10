@@ -39,6 +39,28 @@ def set_window_icon(win):
             pass
 
 
+def place_dialog(win):
+    """Größe aus dem fertigen Inhalt berechnen, festsetzen und zentrieren.
+
+    Muss aufgerufen werden, NACHDEM alle Widgets gebaut sind und BEVOR das Fenster angezeigt wird -
+    sonst bleibt es auf manchen Fenstermanagern (z. B. labwc) auf der leeren Anfangsgröße stehen.
+    """
+    win.update_idletasks()
+    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    w = min(win.winfo_reqwidth(), sw - 40)
+    h = min(win.winfo_reqheight(), sh - 80)
+    win.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 2)}")
+    win.resizable(False, False)
+
+
+def fit_window(win, width, height, min_size=(640, 420)):
+    """Fenster mit Wunschgröße, aber nie größer als der Bildschirm, zentriert."""
+    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    w, h = min(width, sw - 40), min(height, sh - 80)
+    win.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 2)}")
+    win.minsize(min(min_size[0], w), min(min_size[1], h))
+
+
 def modal(win):
     """Fenster modal machen (grab schlägt auf manchen Systemen fehl, solange das Fenster nicht sichtbar ist)."""
     try:
