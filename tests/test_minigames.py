@@ -111,6 +111,37 @@ def test_cricket():
     assert g.finished
 
 
+def test_cricket_input_and_display():
+    g = Cricket(["Anna", "Ben"])
+    keys = {k: a["id"] for a in g.actions() for k in a["keys"]}
+    assert keys["20"] == "S0" and keys["t20"] == "T0" and keys["d16"] == "D4" and keys["15"] == "S5"
+    assert keys["25"] == "S6" and keys["b"] == "S6" and keys["50"] == "D6" and keys["db"] == "D6"
+    assert keys["0"] == "miss" and keys["m"] == "miss" and keys["n"] == "next" and "t25" not in keys
+    # Anzeige der Darts der laufenden Aufnahme
+    g.act("T0"); g.act("S1")
+    v = g.view()
+    assert v["turn"] == ["T20", "S19"] and v["headline"] == "Anna wirft" and "Dart 3 von 3" in v["subline"]
+    g.act("miss")                                         # dritter Dart -> Ben ist dran, Hinweis auf Annas Aufnahme
+    v = g.view()
+    assert g.current == 1 and v["turn"] == [] and v["headline"] == "Ben wirft"
+    assert v["note"] == "Letzte Aufnahme Anna:  T20  ·  S19  ·  -", v["note"]
+    g.act("D6")                                           # erster Dart von Ben: Hinweis verschwindet
+    assert g.view()["note"] == "" and g.view()["turn"] == ["Bull"]
+    g.act("S6"); assert g.view()["turn"] == ["Bull", "25"]
+    # Aufnahme beenden ohne Dart wird abgelehnt (und nicht als Schritt gezählt)
+    g.act("next")                                         # nach 2 Darts erlaubt
+    assert g.current == 0
+    steps = len(g._undo)
+    assert g.act("next") is False and g.message and len(g._undo) == steps
+    # tote Felder werden in der Tabelle markiert
+    g = Cricket(["A", "B"]); g.marks = [[3] * 7, [3, 0, 0, 0, 0, 0, 0]]
+    rows = g.view()["table"]["rows"]
+    assert rows[0][3] is True and rows[1][3] is False
+    # Gewinner-Anzeige
+    g = Cricket(["A", "B"]); g.points = [50, 0]; g.marks[0] = [3, 3, 3, 3, 3, 3, 2]
+    g.act("S6"); assert g.view()["headline"] == "A gewinnt!"
+
+
 def test_clock():
     g = AroundTheClock(["A", "B"])
     assert [a["id"] for a in g.actions()] == ["hit", "miss"]

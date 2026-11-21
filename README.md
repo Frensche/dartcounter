@@ -94,14 +94,15 @@ Am Ende gibt es den Endstand mit *Nochmal* / *Anderes Minispiel* / *Zurück*.
 |---|---|---|
 | **Random Checkout** | Zufälliges Finish in 3 Darts auschecken, alle Spieler bekommen dieselbe Zahl; Schwierigkeit und Rundenzahl wählbar | `1` / `2` / `3` = geschafft mit so vielen Darts, `0` oder `N` = nicht geschafft |
 | **121** | Startziel 121, 9 Darts (3 Aufnahmen) zum Auschecken; geschafft = Ziel +1, nicht geschafft = ein Leben weniger (1/3/5 Leben) | `J` oder `1` = geschafft, `N` oder `0` = nicht |
-| **Cricket** | 20, 19, 18, 17, 16, 15 und Bull schließen (3 Markierungen), auf offene Felder Punkte sammeln; gewonnen hat, wer alles geschlossen hat und nicht hinter den Punkten liegt | Feld `1`-`7` (1=20 ... 6=15, 7=Bull), dann `S` / `D` / `T`; z. B. `1` `T` = Triple 20; `0`/`M` = Fehlwurf, `N` = Aufnahme beenden |
+| **Cricket** | 20, 19, 18, 17, 16, 15 und Bull schließen (3 Markierungen), auf offene Felder Punkte sammeln; gewonnen hat, wer alles geschlossen hat und nicht hinter den Punkten liegt | Dart so tippen, wie man ihn sagt - **ohne Enter**: `20` = Single 20, `T20` = Triple 20, `D16` = Double 16, `25` oder `B` = Bull, `50` oder `DB` = Doppel-Bull; `0`/`M` = Fehlwurf, `N` = Aufnahme beenden (3 Darts beenden sie automatisch) |
 | **Around the Clock** | 1 bis 20 und Bull der Reihe nach treffen; klassisch oder mit Sprung (Double +2, Triple +3) | `1`/`H` = Treffer, `2` = Double, `3` = Triple, `0`/`M` = Fehlwurf |
 | **Shanghai** | Runde n = Zielfeld n (Single/Double/Triple zählen 1x/2x/3x); Single+Double+Triple in einer Aufnahme gewinnt sofort | `1` Single, `2` Double, `3` Triple, `0`/`M` Fehlwurf |
 | **Bob's 27** | Doubles-Training D1-D20 und Bull, Start mit 27 Punkten, ohne Treffer gibt es Abzug | Treffer aus drei Darts: `0`-`3` |
 | **Highscore** | Feste Rundenzahl, Punkte der Aufnahmen werden addiert | Zahl + `Enter` (nur Ziffern) oder `F1`-`F8` |
 
 Alle Minispiele lassen sich auch mit den Bildschirmtasten bedienen; die Tastenhilfe steht unten
-im Spiel. Während eines Turnier-Matches sind sie gesperrt.
+im Spiel. Bei Cricket zeigt die Anzeige die Darts der laufenden Aufnahme (z. B. `T20  25  -`), die
+letzte Aufnahme des Vorspielers und geschlossene Felder (grau = von allen geschlossen). Während eines Turnier-Matches sind sie gesperrt.
 
 ## Bedienung
 

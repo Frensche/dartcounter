@@ -14,10 +14,15 @@ STYLE_BY_KIND = {"": "Quick.TButton", "good": "Finish.TButton", "bad": "MiniBad.
 
 
 def key_hint(keys):
-    """Anzeige der Tasten einer Eingabe, z. B. ('1t',) -> '1 T',  ('j', '1') -> 'J / 1'."""
-    def one(k):
-        return f"{k[0]} {k[1:].upper()}" if len(k) == 2 and k[0].isdigit() else k.upper()
-    return " / ".join(one(k) for k in keys)
+    """Anzeige der Tasten einer Eingabe, z. B. ('t20',) -> 'T20',  ('j', '1') -> 'J / 1'."""
+    return " / ".join(k.upper() for k in keys[:2])
+
+
+def dart_kind(label):
+    """Farbe einer Dart-Anzeige: T = Triple, D/Bull = Double, sonst Single; '-' = Fehlwurf."""
+    if label in ("", "-"):
+        return "miss"
+    return chip_kind(label)
 
 
 # --------------------------------------------------------------------------
@@ -141,7 +146,7 @@ class MiniGameSetupDialog(tk.Toplevel):
 # --------------------------------------------------------------------------
 
 class MiniGameFrame(tk.Frame):
-    CHORD_TIMEOUT_MS = 1500
+    CHORD_TIMEOUT_MS = 2500
 
     def __init__(self, app, game):
         super().__init__(app.root, bg=theme.BG)
@@ -150,6 +155,9 @@ class MiniGameFrame(tk.Frame):
         self._buf = ""
         self._buf_job = None
         self._finish_job = None
+        self._chips_sig = None
+        self._actions_sig = None
+        self._table = None
         f = app.fonts
 
         self.columnconfigure(0, weight=1)
@@ -169,7 +177,6 @@ class MiniGameFrame(tk.Frame):
         self.body.grid(row=1, column=0, sticky="nsew", padx=16)
         self.right = tk.Frame(self.body, bg=theme.BG)
         self.left = tk.Frame(self.body, bg=theme.BG)
-        self.left.pack(side="left", fill="both", expand=True)
 
         # Zahleneingabe (nur Highscore)
         self.entry = None
@@ -193,92 +200,197 @@ class MiniGameFrame(tk.Frame):
         tk.Label(self, text=game.hint, font=("", 11), bg=theme.BG, fg=theme.MUTED, wraplength=1500,
                  justify="left").grid(row=4, column=0, sticky="w", padx=16, pady=(0, 8))
 
+        self._build_stage()
         self.render()
         if self.entry:
             self.entry.focus_set()
 
-    # ---------------- Anzeige ----------------
+    # ---------------- Aufbau (einmalig) ----------------
+
+    def _build_stage(self):
+        """Alle Widgets werden nur einmal gebaut; render() ändert danach nur noch Texte und Farben (kein Flackern)."""
+        g, f = self.game, self.app.fonts
+        first = g.view()
+        self.pad_mode = any(a["pad"] for a in g.actions())
+        self.has_table = bool(first.get("table"))
+        self.has_turn = "turn" in first
+        if self.pad_mode:
+            self.right.pack(side="right", fill="y", padx=(12, 0))    # zuerst packen, damit die Tasten Platz behalten
+        self.left.pack(side="left", fill="both", expand=True)
+
+        # --- Anzeige: Ziel, Hinweiszeile, Darts der Aufnahme, ggf. Tabelle
+        self.stage = tk.Frame(self.left, bg=theme.CARD, highlightthickness=2, highlightbackground=theme.LINE)
+        self.stage.pack(fill="both", expand=True, pady=(0, 8))
+        self.headline = tk.Label(self.stage, font=f["name"] if self.has_table else f["headline"], bg=theme.CARD,
+                                 fg=theme.INK)
+        if self.has_table:
+            self.headline.pack(fill="x", pady=(8, 0))
+        else:
+            self.headline.pack(expand=True, fill="both", pady=(6, 0))
+        self.subline = tk.Label(self.stage, font=f["sub"], bg=theme.CARD, fg=theme.MUTED)
+        self.subline.pack()
+        self.turn_slots = []
+        if self.has_turn:
+            row = tk.Frame(self.stage, bg=theme.CARD)
+            row.pack(pady=(6, 0))
+            for _ in range(3):
+                lbl = tk.Label(row, font=f["chip"], width=6, padx=8, pady=2)
+                lbl.pack(side="left", padx=5)
+                self.turn_slots.append(lbl)
+        self.note = tk.Label(self.stage, font=("", 12), bg=theme.CARD, fg=theme.MUTED)
+        self.note.pack()
+        self.chips = tk.Frame(self.stage, bg=theme.CARD)
+        self.chips.pack(pady=(6, 8))
+        if self.has_table:
+            self.table_frame = tk.Frame(self.stage, bg=theme.CARD)
+            self.table_frame.pack(pady=(4, 10), expand=True)
+
+        # --- Spielerkarten
+        self.cards_frame = tk.Frame(self.left, bg=theme.BG)
+        self.cards_frame.pack(fill="x", pady=(0, 8))
+        self.card_widgets = []
+        for i in range(len(first["cards"])):
+            self.cards_frame.columnconfigure(i, weight=1, uniform="cards")
+            frame = tk.Frame(self.cards_frame, bg=theme.CARD, highlightthickness=3, highlightbackground=theme.LINE,
+                             padx=8, pady=6)
+            frame.grid(row=0, column=i, sticky="nsew", padx=5)
+            name = tk.Label(frame, font=f["name"], pady=2)
+            name.pack(fill="x")
+            big = tk.Label(frame, font=f["score"], bg=theme.CARD)
+            big.pack()
+            lines = tk.Frame(frame, bg=theme.CARD)
+            lines.pack()
+            self.card_widgets.append({"frame": frame, "name": name, "big": big, "lines": lines, "line_lbls": []})
+
+        self.actions_parent = self.right if self.pad_mode else self.left
+        self.actions_wrap = None
+
+    # ---------------- Anzeige aktualisieren ----------------
 
     def render(self):
         g, f = self.game, self.app.fonts
         view = g.view()
-        pad_mode = any(a["pad"] for a in g.actions())
-        for w in list(self.left.winfo_children()) + list(self.right.winfo_children()):
-            w.destroy()
-        self.left.pack_forget()
-        self.right.pack_forget()
-        if pad_mode:
-            self.right.pack(side="right", fill="y", padx=(12, 0))   # zuerst packen, damit die Tasten Platz behalten
-        self.left.pack(side="left", fill="both", expand=True)
-
-        # --- Kopf der Anzeige: Ziel groß, darunter Hinweiszeile
-        stage = tk.Frame(self.left, bg=theme.CARD, highlightthickness=2, highlightbackground=theme.LINE)
-        stage.pack(fill="both", expand=True, pady=(0, 8))
-        tk.Label(stage, text=view.get("headline", ""), font=f["headline"], bg=theme.CARD, fg=theme.INK).pack(
-            expand=True, fill="both", pady=(6, 0))
-        tk.Label(stage, text=view.get("subline", ""), font=f["sub"], bg=theme.CARD, fg=theme.MUTED).pack()
-        chips = tk.Frame(stage, bg=theme.CARD)
-        chips.pack(pady=(6, 10))
-        for label in view.get("chips", []):
-            tk.Label(chips, text=label, font=f["chip"], fg="white", bg=theme.CHIP_COLORS[chip_kind(label)],
-                     padx=14, pady=3).pack(side="left", padx=5)
-        if view.get("table"):
-            self._render_table(stage, view["table"])
-
-        # --- Spielerkarten
-        cards = tk.Frame(self.left, bg=theme.BG)
-        cards.pack(fill="x", pady=(0, 8))
-        for i, c in enumerate(view["cards"]):
-            cards.columnconfigure(i, weight=1, uniform="cards")
-            active = c.get("active")
-            card = tk.Frame(cards, bg=theme.CARD, highlightthickness=7 if active else 3,
-                            highlightbackground=theme.RED if active else theme.LINE, padx=8, pady=6)
-            card.grid(row=0, column=i, sticky="nsew", padx=5)
-            tk.Label(card, text=("▶  " if active else "") + c["name"], font=f["name"], pady=2,
-                     bg=theme.RED if active else "#dfe2e6", fg="white" if active else theme.INK).pack(fill="x")
-            tk.Label(card, text=c["big"], font=f["score"], bg=theme.CARD,
-                     fg=theme.MUTED if c.get("out") else theme.INK).pack()
-            for line in c.get("lines", []):
-                tk.Label(card, text=line, font=f["sub"], bg=theme.CARD, fg=theme.INK).pack()
-
-        # --- Eingabetasten
-        self._render_actions(self.right if pad_mode else self.left, pad_mode)
-
+        self.headline.configure(text=view.get("headline", ""))
+        self.subline.configure(text=view.get("subline", ""))
+        self.note.configure(text=view.get("note", ""))
+        self._update_turn(view.get("turn"))
+        self._update_chips(view.get("chips", []))
+        if self.has_table:
+            self._update_table(view["table"])
+        self._update_cards(view["cards"])
+        self._update_actions()
         self.msg_var.set(g.message)
 
-    def _render_table(self, parent, table):
-        f = self.app.fonts
-        grid = tk.Frame(parent, bg=theme.CARD)
-        grid.pack(pady=(0, 10))
-        players = table["players"]
-        tk.Label(grid, text="", bg=theme.CARD, width=7).grid(row=0, column=0)
-        for c, name in enumerate(players, start=1):
-            active = (c - 1) == table["current"]
-            tk.Label(grid, text=name, font=f["sub"], width=12, bg=theme.RED if active else "#dfe2e6",
-                     fg="white" if active else theme.INK).grid(row=0, column=c, padx=3, pady=2, sticky="nsew")
-        for r, (label, marks, closed) in enumerate(table["rows"], start=1):
-            tk.Label(grid, text=label, font=f["sub"], bg=theme.CARD, fg=theme.INK, width=7).grid(row=r, column=0)
-            for c, (mark, is_closed) in enumerate(zip(marks, closed), start=1):
-                tk.Label(grid, text=mark or " ", font=f["recent"], width=8,
-                         bg=theme.GREEN if is_closed else "#f0f1f3",
-                         fg="white" if is_closed else theme.INK).grid(row=r, column=c, padx=3, pady=1, sticky="nsew")
+    def _update_turn(self, turn):
+        if not self.has_turn:
+            return
+        turn = turn or []
+        for i, lbl in enumerate(self.turn_slots):
+            label = turn[i] if i < len(turn) else ""
+            kind = dart_kind(label)
+            if not label:
+                lbl.configure(text="·", bg="#eceef0", fg=theme.MUTED)
+            elif kind == "miss":
+                lbl.configure(text="-", bg="#cfd2d6", fg="#555555")
+            else:
+                lbl.configure(text=label, bg=theme.CHIP_COLORS[kind], fg="white")
 
-    def _render_actions(self, parent, pad_mode):
-        wrap = tk.Frame(parent, bg=theme.BG)
-        wrap.pack(fill="both", expand=True) if not pad_mode else wrap.pack(fill="y")
+    def _update_chips(self, chips):
+        sig = tuple(chips)
+        if sig == self._chips_sig:
+            return
+        self._chips_sig = sig
+        for w in self.chips.winfo_children():
+            w.destroy()
+        for label in chips:
+            tk.Label(self.chips, text=label, font=self.app.fonts["chip"], fg="white",
+                     bg=theme.CHIP_COLORS[chip_kind(label)], padx=14, pady=3).pack(side="left", padx=5)
+
+    def _update_table(self, table):
+        f = self.app.fonts
+        players = table["players"]
+        if self._table is None:
+            tf = self.table_frame
+            head = [tk.Label(tf, text="", bg=theme.CARD, width=7)]
+            head[0].grid(row=0, column=0)
+            names = []
+            for c in range(len(players)):
+                lbl = tk.Label(tf, font=f["sub"], width=14, pady=3)
+                lbl.grid(row=0, column=c + 1, padx=3, pady=2, sticky="nsew")
+                names.append(lbl)
+            labels, cells = [], []
+            for r in range(len(table["rows"])):
+                lbl = tk.Label(tf, font=f["name"], bg=theme.CARD, fg=theme.INK, width=5)
+                lbl.grid(row=r + 1, column=0)
+                labels.append(lbl)
+                row = []
+                for c in range(len(players)):
+                    cell = tk.Label(tf, font=f["chip"], width=5)
+                    cell.grid(row=r + 1, column=c + 1, padx=3, pady=1, sticky="nsew")
+                    row.append(cell)
+                cells.append(row)
+            self._table = {"names": names, "labels": labels, "cells": cells}
+        for c, name in enumerate(players):
+            active = c == table["current"]
+            self._table["names"][c].configure(text=name, bg=theme.RED if active else "#dfe2e6",
+                                              fg="white" if active else theme.INK)
+        for r, (label, marks, closed, dead) in enumerate(table["rows"]):
+            self._table["labels"][r].configure(text=label, fg="#9a9da3" if dead else theme.INK)
+            for c, (mark, is_closed) in enumerate(zip(marks, closed)):
+                if dead:
+                    bg, fg = "#cfd2d6", "#777777"
+                elif is_closed:
+                    bg, fg = theme.GREEN, "white"
+                else:
+                    bg, fg = "#f0f1f3", theme.INK
+                self._table["cells"][r][c].configure(text=mark or " ", bg=bg, fg=fg)
+
+    def _update_cards(self, cards):
+        f = self.app.fonts
+        for i, c in enumerate(cards):
+            w = self.card_widgets[i]
+            active = bool(c.get("active"))
+            w["frame"].configure(highlightthickness=7 if active else 3,
+                                 highlightbackground=theme.RED if active else theme.LINE)
+            w["name"].configure(text=("▶  " if active else "") + c["name"], bg=theme.RED if active else "#dfe2e6",
+                                fg="white" if active else theme.INK)
+            w["big"].configure(text=c["big"], fg=theme.MUTED if c.get("out") else theme.INK)
+            lines = c.get("lines", [])
+            while len(w["line_lbls"]) < len(lines):
+                lbl = tk.Label(w["lines"], font=f["sub"], bg=theme.CARD, fg=theme.INK)
+                lbl.pack()
+                w["line_lbls"].append(lbl)
+            while len(w["line_lbls"]) > len(lines):
+                w["line_lbls"].pop().destroy()
+            for lbl, text in zip(w["line_lbls"], lines):
+                lbl.configure(text=text)
+
+    def _update_actions(self):
+        """Eingabetasten nur neu bauen, wenn sich Beschriftung oder Verfügbarkeit geändert hat."""
         acts = self.game.actions()
+        sig = tuple((a["id"], a["label"], a["enabled"]) for a in acts)
+        if sig == self._actions_sig:
+            return
+        self._actions_sig = sig
+        if self.actions_wrap is not None:
+            self.actions_wrap.destroy()
+        wrap = self.actions_wrap = tk.Frame(self.actions_parent, bg=theme.BG)
+        if self.pad_mode:
+            wrap.pack(fill="y")
+        else:
+            wrap.pack(fill="both", expand=True)
         for i, a in enumerate(acts):
             row, col = a["pad"] if a["pad"] else (i // 4, i % 4)
-            text = f"{a['label']}\n[ {key_hint(a['keys'])} ]" if a["keys"] else a["label"]
+            # Im Eingabe-Pad (Cricket) steht die Taste im Beschriftungstext selbst (T20 = Taste T20); Hinweis nur bei Sondertasten
+            show_hint = bool(a["keys"]) and (not self.pad_mode or a["id"] in ("miss", "next"))
+            text = f"{a['label']}\n[ {key_hint(a['keys'])} ]" if show_hint else a["label"]
             btn = ttk.Button(wrap, text=text, style=STYLE_BY_KIND.get(a["style"], "Quick.TButton"),
                              command=lambda act=a: self.activate(act),
                              state="normal" if a["enabled"] else "disabled")
             btn.grid(row=row, column=col, padx=4, pady=3, sticky="nsew")
-        cols = {(a["pad"][1] if a["pad"] else i % 4) for i, a in enumerate(acts)}
-        rows = {(a["pad"][0] if a["pad"] else i // 4) for i, a in enumerate(acts)}
-        for c in cols:
+        for c in {(a["pad"][1] if a["pad"] else i % 4) for i, a in enumerate(acts)}:
             wrap.columnconfigure(c, weight=1, uniform="act")
-        for r in rows:
+        for r in {(a["pad"][0] if a["pad"] else i // 4) for i, a in enumerate(acts)}:
             wrap.rowconfigure(r, weight=1, uniform="actr")
 
     # ---------------- Eingaben ----------------
@@ -292,7 +404,7 @@ class MiniGameFrame(tk.Frame):
     def _after_act(self):
         self.render()
         if self.game.finished and not self._finish_job:
-            self._finish_job = self.after(400, self._show_result)
+            self._finish_job = self.after(900, self._show_result)    # kurz stehen lassen, damit man den letzten Dart sieht
 
     def _submit_number(self):
         raw = self.entry_var.get().strip()
@@ -304,7 +416,11 @@ class MiniGameFrame(tk.Frame):
         self.entry.focus_set()
 
     def on_key(self, ch):
-        """Taste aus dem Hauptfenster (Ziffern, Buchstaben). Mehrtastenfolgen wie '1' + 'T' werden gesammelt."""
+        """Taste aus dem Hauptfenster (Ziffern, Buchstaben).
+
+        Mehrstellige Eingaben wie "t20" oder "25" werden gesammelt und sofort ausgeführt, sobald sie vollständig
+        sind - ohne Enter. Ist eine Fortsetzung ungültig (z. B. "t3"), wird die Eingabe verworfen und gemeldet.
+        """
         ch = ch.lower()
         if not ch or self.game.finished:
             return
@@ -316,21 +432,28 @@ class MiniGameFrame(tk.Frame):
         for a in self.game.actions():
             for k in a["keys"]:
                 keys[k] = a
-        self._buf += ch
-        while self._buf:
-            exact = keys.get(self._buf)
-            longer = [k for k in keys if k.startswith(self._buf) and k != self._buf]
-            if exact and not longer:
-                self._reset_buffer()
-                self.activate(exact)
-                return
-            if longer:
-                if self._buf_job:
-                    self.after_cancel(self._buf_job)
-                self._buf_job = self.after(self.CHORD_TIMEOUT_MS, self._reset_buffer)
-                self.msg_var.set(f"{self._buf.upper()} ... (weitere Taste)")
-                return
-            self._buf = self._buf[1:]      # Taste passt zu nichts: den Anfang verwerfen und neu versuchen
+        buf = self._buf + ch
+        longer = any(k.startswith(buf) and k != buf for k in keys)
+        if buf in keys and not longer:
+            self._reset_buffer()
+            action = keys[buf]
+            if action["enabled"]:
+                self.activate(action)
+            else:
+                self.game.message = "Diese Eingabe ist gerade nicht möglich."
+                self.render()
+            return
+        if longer:
+            self._buf = buf
+            if self._buf_job:
+                self.after_cancel(self._buf_job)
+            self._buf_job = self.after(self.CHORD_TIMEOUT_MS, self._reset_buffer)
+            self.msg_var.set(f"{buf.upper()} ...  (weiter tippen)")
+            return
+        if self._buf:                       # ungültige Fortsetzung: alles verwerfen, nichts ausführen
+            self._reset_buffer()
+            self.msg_var.set(f"'{buf.upper()}' ist keine gültige Eingabe.")
+        # einzelne unbekannte Taste: ignorieren
 
     def _reset_buffer(self):
         if self._buf_job:

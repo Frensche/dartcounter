@@ -269,8 +269,8 @@ class Cricket(MiniGame):
              "Triple = 3). Mit drei Markierungen ist ein Feld geschlossen. Triffst du ein Feld, das du geschlossen "
              "hast und ein Gegner noch nicht, bekommst du dessen Punkte. Gewonnen hat, wer alle Felder geschlossen "
              "hat und mindestens so viele Punkte wie alle Gegner. Allein gespielt: alle Felder schließen.")
-    hint = ("Feld wählen: 1=20  2=19  3=18  4=17  5=16  6=15  7=Bull, dann S / D / T (z. B. 1 T = Triple 20)   ·   "
-            "0 oder M: Fehlwurf   ·   N: Aufnahme beenden   ·   Strg+Z: zurück")
+    hint = ("Dart eintippen wie gesagt:  20 = Single 20,  T20 = Triple 20,  D16 = Double 16,  25 = Bull,  50 = Doppel-Bull "
+            "(oder B / DB)   ·   0 oder M: Fehlwurf   ·   N: Aufnahme beenden   ·   Strg+Z: letzten Dart zurück")
 
     def setup(self):
         self.marks = [[0] * 7 for _ in range(self.n)]
@@ -280,21 +280,36 @@ class Cricket(MiniGame):
         self.darts = 0
         self.round = 1
         self.winner = None
+        self.turn_darts = []                  # Darts der laufenden Aufnahme (Anzeige)
+        self.last_turn = [""] * self.n        # letzte fertige Aufnahme je Spieler (Anzeige)
+        self.prev_player = None
+
+    @staticmethod
+    def dart_label(code, fi):
+        if fi == 6:
+            return "25" if code == "S" else "Bull"
+        return f"{code}{CRICKET_LABELS[fi]}" if code != "S" else f"S{CRICKET_LABELS[fi]}"
 
     def actions(self):
         acts = []
         for fi, label in enumerate(CRICKET_LABELS):
-            for col, (code, name) in enumerate((("S", "Single"), ("D", "Double"), ("T", "Triple"))):
-                if fi == 6 and code == "T":
-                    continue                     # es gibt kein Triple-Bull
-                acts.append(action(f"{code}{fi}", f"{code[0]} {label}", (f"{fi + 1}{code.lower()}",),
-                                   "triple" if code == "T" else ("double" if code == "D" else ""), pad=(fi, col)))
+            if fi == 6:
+                acts.append(action("S6", "25", ("25", "b", "sb"), "", pad=(6, 0)))
+                acts.append(action("D6", "Bull (50)", ("50", "db"), "double", pad=(6, 1)))
+                continue
+            acts.append(action(f"S{fi}", f"S{label}", (label, f"s{label}"), "", pad=(fi, 0)))
+            acts.append(action(f"D{fi}", f"D{label}", (f"d{label}",), "double", pad=(fi, 1)))
+            acts.append(action(f"T{fi}", f"T{label}", (f"t{label}",), "triple", pad=(fi, 2)))
         acts.append(action("miss", "Fehlwurf", ("0", "m"), "bad", pad=(7, 0)))
         acts.append(action("next", "Aufnahme beenden", ("n",), "", pad=(7, 1)))
         return acts
 
     def _end_turn(self):
-        self.turns[self.current] += 1
+        p = self.current
+        self.turns[p] += 1
+        self.last_turn[p] = "  ·  ".join(self.turn_darts) if self.turn_darts else "-"
+        self.prev_player = p
+        self.turn_darts = []
         self.darts = 0
         self.current = (self.current + 1) % self.n
         if self.current == 0:
@@ -303,24 +318,32 @@ class Cricket(MiniGame):
     def do(self, aid, value=None):
         p = self.current
         if aid == "next":
+            if self.darts == 0 and not self.turn_darts:
+                self.message = "In dieser Aufnahme wurde noch kein Dart eingegeben."
+                return False
             self._end_turn()
             return True
         if aid == "miss":
+            self.turn_darts.append("-")
             self.darts += 1
         else:
             try:
-                mult, fi = {"S": 1, "D": 2, "T": 3}[aid[0]], int(aid[1:])
+                code, fi = aid[0], int(aid[1:])
+                mult = {"S": 1, "D": 2, "T": 3}[code]
                 field = CRICKET_FIELDS[fi]
             except (KeyError, ValueError, IndexError):
                 return False
             if fi == 6 and mult == 3:
                 return False
+            if self.prev_player is not None and self.darts == 0:
+                self.prev_player = None       # Hinweis auf die letzte Aufnahme verschwindet mit dem ersten Dart
             for _ in range(mult):
                 self.mark_total[p] += 1
                 if self.marks[p][fi] < 3:
                     self.marks[p][fi] += 1
                 elif any(self.marks[o][fi] < 3 for o in range(self.n) if o != p):
                     self.points[p] += field
+            self.turn_darts.append(self.dart_label(code, fi))
             self.darts += 1
             if all(m >= 3 for m in self.marks[p]) and (
                     self.n == 1 or self.points[p] >= max(self.points[o] for o in range(self.n) if o != p)):
@@ -333,8 +356,9 @@ class Cricket(MiniGame):
 
     def view(self):
         sym = {0: "", 1: "/", 2: "X", 3: "⊗"}
+        dead = [all(self.marks[p][fi] >= 3 for p in range(self.n)) for fi in range(7)]
         rows = [(CRICKET_LABELS[fi], [sym[self.marks[p][fi]] for p in range(self.n)],
-                 [self.marks[p][fi] >= 3 for p in range(self.n)]) for fi in range(7)]
+                 [self.marks[p][fi] >= 3 for p in range(self.n)], dead[fi]) for fi in range(7)]
         cards = []
         for i in range(self.n):
             closed = sum(1 for m in self.marks[i] if m >= 3)
@@ -342,9 +366,17 @@ class Cricket(MiniGame):
             cards.append({"name": self.names[i], "big": str(self.points[i]),
                           "lines": [f"Geschlossen {closed}/7", mpr],
                           "active": i == self.current and not self.finished})
+        if self.finished:
+            headline, sub, note = f"{self.names[self.winner]} gewinnt!", "", ""
+            turn = list(self.turn_darts)
+        else:
+            headline = f"{self.names[self.current]} wirft"
+            sub = f"Dart {min(self.darts + 1, 3)} von 3   ·   Runde {self.round}"
+            note = (f"Letzte Aufnahme {self.names[self.prev_player]}:  {self.last_turn[self.prev_player]}"
+                    if self.prev_player is not None else "")
+            turn = list(self.turn_darts)
         return {
-            "headline": "Cricket", "chips": [],
-            "subline": f"{self.names[self.current]}   ·   Dart {min(self.darts + 1, 3)}/3   ·   Runde {self.round}",
+            "headline": headline, "subline": sub, "note": note, "chips": [], "turn": turn,
             "table": {"players": list(self.names), "rows": rows, "current": self.current},
             "cards": cards,
         }
@@ -381,6 +413,7 @@ class AroundTheClock(MiniGame):
         self.darts_total = [0] * self.n
         self.darts = 0
         self.winner = None
+        self.turn_darts = []
 
     @staticmethod
     def label(pos):
@@ -399,9 +432,12 @@ class AroundTheClock(MiniGame):
         if aid in steps:
             if aid != "hit" and self.options["variant"] != "jump":
                 return False
+            self.turn_darts.append(("" if aid == "hit" else aid[0].upper()) + self.label(min(self.pos[p], self.BULL)))
             self.pos[p] += steps[aid]
         elif aid != "miss":
             return False
+        else:
+            self.turn_darts.append("-")
         self.darts_total[p] += 1
         self.darts += 1
         if self.pos[p] > self.BULL:
@@ -410,6 +446,7 @@ class AroundTheClock(MiniGame):
             return True
         if self.darts >= 3:
             self.darts = 0
+            self.turn_darts = []
             self.current = (self.current + 1) % self.n
         return True
 
@@ -418,6 +455,7 @@ class AroundTheClock(MiniGame):
         return {
             "headline": self.label(self.pos[p]) if not self.finished else "Geschafft!",
             "subline": f"{self.names[p]}   ·   Dart {min(self.darts + 1, 3)}/3", "chips": [],
+            "turn": list(self.turn_darts),
             "cards": [{"name": self.names[i], "big": self.label(min(self.pos[i], self.BULL)),
                        "lines": [f"{self.darts_total[i]} Darts", f"{min(self.pos[i] - 1, self.BULL)}/{self.BULL} Felder"],
                        "active": i == self.current and not self.finished} for i in range(self.n)],
@@ -456,6 +494,7 @@ class Shanghai(MiniGame):
         self.hit = [set() for _ in range(self.n)]      # in dieser Aufnahme getroffen: 1 / 2 / 3
         self.winner = None
         self.shanghai = False
+        self.turn_darts = []
 
     def actions(self):
         return [action("S", "Single", ("1",), ""), action("D", "Double", ("2",), "double"),
@@ -467,15 +506,19 @@ class Shanghai(MiniGame):
             mult = {"S": 1, "D": 2, "T": 3}[aid]
             self.score[p] += mult * self.round
             self.hit[p].add(mult)
+            self.turn_darts.append(f"{aid}{self.round}")
             if self.hit[p] >= {1, 2, 3}:
                 self.winner, self.shanghai, self.finished = p, True, True
                 self.darts += 1
                 return True
         elif aid != "miss":
             return False
+        else:
+            self.turn_darts.append("-")
         self.darts += 1
         if self.darts >= 3:
             self.darts = 0
+            self.turn_darts = []
             self.hit[p] = set()
             self.current += 1
             if self.current >= self.n:
@@ -493,7 +536,7 @@ class Shanghai(MiniGame):
             "headline": f"Ziel: {r}",
             "subline": f"Runde {r}/{self.options['rounds']}   ·   {self.names[p]}   ·   Dart {min(self.darts + 1, 3)}/3"
                        + (f"   ·   getroffen: {done}" if done else ""),
-            "chips": [f"S{r}", f"D{r}", f"T{r}"],
+            "chips": [f"S{r}", f"D{r}", f"T{r}"], "turn": list(self.turn_darts),
             "cards": [{"name": self.names[i], "big": str(self.score[i]),
                        "lines": [f"Ziel {r}"], "active": i == self.current and not self.finished}
                       for i in range(self.n)],
