@@ -116,6 +116,8 @@ def apply_style(root):
     button("Quick.TButton", "#34373d", "#565a62", font=("", 12, "bold"), pad=(8, 12))
     button("Danger.TButton", "#7a2a31", "#9b3640")
     button("Rest.TButton", "#b86e00", "#d98200", font=("", 12, "bold"), pad=(8, 12))
+    button("MiniBad.TButton", "#7a2a31", "#9b3640", font=("", 12, "bold"), pad=(8, 12))
+    button("MiniTriple.TButton", RED, RED_HOVER, font=("", 12, "bold"), pad=(8, 12))
     button("Finish.TButton", GREEN, "#238a23", font=("", 12, "bold"), pad=(8, 12))
 
     s.configure("Treeview", background=CARD, fieldbackground=CARD, foreground=INK, rowheight=28,

@@ -34,8 +34,11 @@ Programm nicht sperren - dafür müsste der Desktop selbst als Kiosk konfigurier
   *Einstellungen* änderbar und werden in `~/.config/dartcounter/config.json` gespeichert),
   `F9` oder `R` = **Rest**, `F10` / `F11` / `F12` (oder `Strg+1` / `Strg+2` / `Strg+3`) =
   **Finish mit 1 / 2 / 3 Darts**.
-- **Rest-Eingabe:** `F9` oder `R` drücken, dann die *verbleibende* Punktzahl tippen und `Enter` -
-  das Programm rechnet die geworfenen Punkte selbst aus.
+- **Rest-Eingabe:** `F9` oder `R` drücken, dann die *verbleibende* Punktzahl tippen - **ohne
+  Enter**. Sobald die Zahl eindeutig ist, wird sie übernommen (bei Stand 100 ist `13` sofort
+  fertig); kann sie noch länger werden (`4` könnte `40` oder `45` sein), wartet das Programm
+  kurz (ca. 1 Sekunde) auf die nächste Ziffer. `Enter` übernimmt weiterhin sofort. Das
+  Programm rechnet die geworfenen Punkte selbst aus.
 - **Finish:** Die Finish-Tasten tragen automatisch den Rest des Spielers als Finish ein und
   merken sich die Anzahl der Darts (nur wählbar, wenn das Finish mit so vielen Darts möglich ist).
   Gibt man das Finish direkt als Zahl ein (oder per Rest 0), kommt die Frage *„Mit wie vielen
@@ -79,6 +82,26 @@ Programm nicht sperren - dafür müsste der Desktop selbst als Kiosk konfigurier
   zählt als Bust — der Score bleibt unverändert, der nächste Spieler ist dran
 - **Undo** (Button oder Strg+Z) macht die letzte Eingabe rückgängig
 - **3-Darts-Average** je Spieler wird live mitgeführt
+
+## Minispiele
+
+Aufruf: *Spiel → Minispiele...* oder `Strg+G`. Man wählt Spiel, Spieler (1-4, die Namen des
+letzten Spiels bleiben stehen) und Optionen; `Esc` öffnet im Spiel das Menü (Weiterspielen,
+Rückgängig, Neustart, anderes Spiel, Regeln, Beenden), `Strg+Z` nimmt die letzte Eingabe zurück.
+Am Ende gibt es den Endstand mit *Nochmal* / *Anderes Minispiel* / *Zurück*.
+
+| Spiel | Worum geht es | Eingabe |
+|---|---|---|
+| **Random Checkout** | Zufälliges Finish in 3 Darts auschecken, alle Spieler bekommen dieselbe Zahl; Schwierigkeit und Rundenzahl wählbar | `1` / `2` / `3` = geschafft mit so vielen Darts, `0` oder `N` = nicht geschafft |
+| **121** | Startziel 121, 9 Darts (3 Aufnahmen) zum Auschecken; geschafft = Ziel +1, nicht geschafft = ein Leben weniger (1/3/5 Leben) | `J` oder `1` = geschafft, `N` oder `0` = nicht |
+| **Cricket** | 20, 19, 18, 17, 16, 15 und Bull schließen (3 Markierungen), auf offene Felder Punkte sammeln; gewonnen hat, wer alles geschlossen hat und nicht hinter den Punkten liegt | Feld `1`-`7` (1=20 ... 6=15, 7=Bull), dann `S` / `D` / `T`; z. B. `1` `T` = Triple 20; `0`/`M` = Fehlwurf, `N` = Aufnahme beenden |
+| **Around the Clock** | 1 bis 20 und Bull der Reihe nach treffen; klassisch oder mit Sprung (Double +2, Triple +3) | `1`/`H` = Treffer, `2` = Double, `3` = Triple, `0`/`M` = Fehlwurf |
+| **Shanghai** | Runde n = Zielfeld n (Single/Double/Triple zählen 1x/2x/3x); Single+Double+Triple in einer Aufnahme gewinnt sofort | `1` Single, `2` Double, `3` Triple, `0`/`M` Fehlwurf |
+| **Bob's 27** | Doubles-Training D1-D20 und Bull, Start mit 27 Punkten, ohne Treffer gibt es Abzug | Treffer aus drei Darts: `0`-`3` |
+| **Highscore** | Feste Rundenzahl, Punkte der Aufnahmen werden addiert | Zahl + `Enter` (nur Ziffern) oder `F1`-`F8` |
+
+Alle Minispiele lassen sich auch mit den Bildschirmtasten bedienen; die Tastenhilfe steht unten
+im Spiel. Während eines Turnier-Matches sind sie gesperrt.
 
 ## Bedienung
 

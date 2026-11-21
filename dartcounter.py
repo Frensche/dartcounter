@@ -35,6 +35,8 @@ from engine import (IMPOSSIBLE_TURN_SCORES, MAX_TURN_SCORE, Player, chip_kind, f
                     solve_checkout)
 from game_dialogs import (DartsDialog, MainMenuDialog, NewGameDialog, SettingsDialog, StartOrderDialog,
                           StatsDialog)
+from minigame_ui import MiniGameFrame, MiniGameSetupDialog
+from minigames import create_game
 from tournament import (DEFAULT_PORT, TOURNAMENT_PATH, Tournament, TournamentClient, TournamentError,
                         TournamentServer, start_scores)
 
@@ -42,11 +44,12 @@ from tournament import (DEFAULT_PORT, TOURNAMENT_PATH, Tournament, TournamentCli
 FONT_SPEC = {
     "name": (24, "bold"), "score": (84, "bold"), "sub": (15, "normal"), "caption": (10, "bold"),
     "chip": (28, "bold"), "recent": (17, "bold"), "fkey": (19, "bold"),
-    "entry": (26, "bold"), "entrylbl": (14, "normal"), "log": (14, "bold"),
+    "entry": (26, "bold"), "entrylbl": (14, "normal"), "log": (14, "bold"), "headline": (80, "bold"),
 }
-PLAYER_FONTS = ("name", "score", "sub", "chip", "recent")   # werden bei 3-4 Spielern zusätzlich verkleinert
+PLAYER_FONTS = ("name", "score", "sub", "chip", "recent", "headline")   # werden bei 3-4 Spielern zusätzlich verkleinert
 FKEY_STYLES = ["Quick.TButton"] * SCORE_KEYS + ["Rest.TButton"] + ["Finish.TButton"] * 3
 INACTIVE_NAME_BG = "#dfe2e6"
+REST_PAUSE_MS = 1100      # so lange wartet die Rest-Eingabe, wenn die Zahl noch länger werden könnte
 
 
 class DartCounterApp:
@@ -74,7 +77,9 @@ class DartCounterApp:
         self.match_over = False
         self.rest_mode = False     # F9 / R: nächste Eingabe ist die Restpunktzahl
         self.last_setup = None     # Einstellungen des letzten Spiels (für Revanche)
+        self.mini = None           # laufendes Minispiel (MiniGameFrame)
         self._rescale_job = None
+        self._rest_job = None
 
         # Turniermodus
         self.tourn = None          # laufendes Turnier-Match an dieser Station
@@ -102,7 +107,7 @@ class DartCounterApp:
         self.fonts = {key: tkfont.Font(root=self.root, family=family, size=size, weight=weight)
                       for key, (size, weight) in FONT_SPEC.items()}
         style = ttk.Style(self.root)
-        for name in ("Quick.TButton", "Rest.TButton", "Finish.TButton"):
+        for name in ("Quick.TButton", "Rest.TButton", "Finish.TButton", "MiniBad.TButton", "MiniTriple.TButton"):
             style.configure(name, font=self.fonts["fkey"], padding=(6, 4))
 
     def _on_configure(self, event):
@@ -119,7 +124,7 @@ class DartCounterApp:
         if w < 200 or h < 200:
             return
         scale = max(0.5, min(w / 1920, h / 1080, 2.5))
-        n = max(1, min(len(self.players), 4))
+        n = max(1, min(len(self.mini.game.names) if self.mini else len(self.players), 4))
         per_player = {1: 1.0, 2: 1.0, 3: 0.8, 4: 0.65}[n]
         for key, (size, _) in FONT_SPEC.items():
             factor = scale * (per_player if key in PLAYER_FONTS else 1.0)
@@ -135,6 +140,7 @@ class DartCounterApp:
         return [
             ("Spiel", [
                 ("Neues Spiel...", "Strg+N", self.new_game),
+                ("Minispiele (Random Checkout, 121, Cricket ...)...", "Strg+G", self.open_minigames),
                 ("Wer beginnt? (Münzwurf / Ausbullen)...", "Strg+W", self.change_starter),
                 ("Leg neu starten", "Strg+R", self.restart_leg),
                 ("Letzte Eingabe rückgängig (Undo)", "Strg+Z", self.undo),
@@ -174,6 +180,9 @@ class DartCounterApp:
 
     def open_main_menu(self):
         """Hauptmenü zum Durchblättern mit Pfeiltasten (für die Bedienung ohne Maus)."""
+        if self.mini:
+            self.mini.open_menu()
+            return
         items = [(group, label, keys, cmd) for group, entries in self._menu_structure()
                  for entry in entries if entry for (label, keys, cmd) in [entry]]
         MainMenuDialog(self.root, items)
@@ -188,7 +197,7 @@ class DartCounterApp:
             "Zahl + Enter: eigene Aufnahme (nur Ziffern), Strg+Z: rückgängig\n\n"
             "OHNE MAUS\n"
             "Esc: Hauptmenü (Pfeiltasten, Enter)\n"
-            "Strg+N: Neues Spiel   Strg+W: Wer beginnt?   Strg+R: Leg neu\n"
+            "Strg+N: Neues Spiel   Strg+G: Minispiele   Strg+W: Wer beginnt?   Strg+R: Leg neu\n"
             "Strg+Q: Beenden   Strg+Umschalt+K: Kiosk ein/aus\n"
             "Strg+Umschalt+N / O / L: Turnier neu / fortsetzen / Leiter-Fenster\n"
             "Strg+Umschalt+S / P: Station verbinden / Station-Fenster\n"
@@ -232,7 +241,7 @@ class DartCounterApp:
     # ---------------- Layout ----------------
 
     def _build_layout(self):
-        outer = ttk.Frame(self.root, padding=(16, 10))
+        outer = self.outer = ttk.Frame(self.root, padding=(16, 10))
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(1, weight=5)   # Spielerfelder
@@ -300,7 +309,7 @@ class DartCounterApp:
         r = self.root
         shortcuts = {
             "<Escape>": self.open_main_menu, "<Menu>": self.open_main_menu,
-            "<Control-n>": self.new_game, "<Control-w>": self.change_starter, "<Control-r>": self.restart_leg,
+            "<Control-n>": self.new_game, "<Control-g>": self.open_minigames, "<Control-w>": self.change_starter, "<Control-r>": self.restart_leg,
             "<Control-q>": self.request_quit, "<Control-K>": self.toggle_kiosk,
             "<Control-N>": self.new_tournament, "<Control-O>": self.resume_tournament,
             "<Control-L>": self.show_master, "<Control-S>": self.connect_station,
@@ -318,17 +327,31 @@ class DartCounterApp:
         # Ziffern landen immer im Eingabefeld, auch wenn dort gerade nicht der Fokus liegt
         for d in "0123456789":
             r.bind(f"<KeyPress-{d}>", self._digit_key)
+        r.bind("<KeyPress>", self._any_key, add="+")
         self.entry.bind("<Return>", lambda e: (self.submit_manual(), "break")[1])
         self.entry.bind("<KP_Enter>", lambda e: (self.submit_manual(), "break")[1])
+        self.entry.bind("<KeyRelease>", self._rest_key)
 
     def _digit_key(self, event):
-        if self.root.focus_get() is self.entry or not self.players:
-            return None
-        if self.root.focus_get() is not None and self.root.focus_get().winfo_class() in ("TEntry", "TSpinbox", "Entry"):
+        focus = self.root.focus_get()
+        if focus is not None and focus.winfo_class() in ("TEntry", "TSpinbox", "Entry"):
+            return None                       # das Eingabefeld hat die Ziffer schon selbst übernommen
+        if self.mini:
+            self.mini.on_key(event.char)
+            return "break"
+        if not self.players:
             return None
         self.entry.focus_set()
         self.entry.insert("end", event.char)
+        self._rest_key()
         return "break"
+
+    def _any_key(self, event):
+        """Buchstabentasten gehören im Minispiel dem Spiel (z. B. S/D/T, J/N, M)."""
+        if self.mini and event.char and event.char.isalpha():
+            self.mini.on_key(event.char)
+            return "break"
+        return None
 
     def _build_fkey_buttons(self):
         for child in self.fkey_frame.winfo_children():
@@ -390,6 +413,11 @@ class DartCounterApp:
     # ---------------- Spiel-Steuerung ----------------
 
     def new_game(self):
+        if self.mini:
+            if not self.mini.game.finished and not messagebox.askyesno(
+                    "Minispiel", "Das laufende Minispiel wird beendet.\n\nNeues Spiel starten?"):
+                return
+            self.leave_minigame()
         if self.tourn:
             messagebox.showinfo("Turnier-Match läuft",
                                 "Solange ein Turnier-Match läuft, kann kein neues Spiel gestartet werden.\n"
@@ -457,7 +485,7 @@ class DartCounterApp:
         self.entry.focus_set()
 
     def change_starter(self):
-        if not self.players:
+        if not self.players or self.mini:
             return
         if self.history:
             messagebox.showinfo("Startspieler", "Der Startspieler lässt sich nur vor dem ersten Wurf "
@@ -466,7 +494,7 @@ class DartCounterApp:
         self.choose_starter()
 
     def restart_leg(self):
-        if not self.players or self.match_over:
+        if not self.players or self.match_over or self.mini:
             return
         for p in self.players:
             p.reset_leg()
@@ -492,7 +520,8 @@ class DartCounterApp:
     def _update_mode_ui(self):
         if self.rest_mode:
             self.entry_lbl_var.set("Rest eingeben:")
-            self.mode_lbl.configure(text="REST-EINGABE AKTIV  (F9 / R = abbrechen)", bg="#b86e00")
+            self.mode_lbl.configure(text="REST-EINGABE  -  Zahl tippen, wird sofort übernommen  (F9 / R = abbrechen)",
+                                    bg="#b86e00")
         else:
             self.entry_lbl_var.set("Geworfene Punkte (0-180):")
             self.mode_lbl.configure(text="", bg=theme.BG, padx=0)
@@ -500,15 +529,59 @@ class DartCounterApp:
         self.mode_lbl.configure(padx=14)
 
     def toggle_rest(self):
+        if self.mini:
+            self.mini.on_key("r")
+            return
         if self.match_over or not self.players:
             return
         self.rest_mode = not self.rest_mode
+        self._cancel_rest_job()
         self._update_mode_ui()
         self.entry.focus_set()
+
+    def _cancel_rest_job(self):
+        if self._rest_job:
+            try:
+                self.root.after_cancel(self._rest_job)
+            except tk.TclError:
+                pass
+            self._rest_job = None
+
+    def _rest_key(self, event=None):
+        """Rest-Modus: Die Zahl wird ohne Enter übernommen, sobald sie eindeutig ist (sonst nach kurzer Pause).
+
+        Eindeutig heißt: Die Zahl lässt sich nicht mehr zu einem größeren, noch gültigen Rest verlängern
+        (z. B. bei Stand 100 ist "13" fertig, "4" könnte noch 40 oder 45 werden und wartet kurz).
+        """
+        self._cancel_rest_job()
+        if not self.rest_mode or not self.players or self.match_over:
+            return
+        raw = self.entry_var.get()
+        if not raw.isdigit():
+            return
+        if raw != "0" and raw.startswith("0"):
+            self.entry_var.set("")
+            return
+        if raw == "0" or int(raw) * 10 > self.players[self.current_idx].score:
+            self._commit_rest()
+        else:
+            self._rest_job = self.root.after(REST_PAUSE_MS, self._commit_rest)
+
+    def _commit_rest(self):
+        self._rest_job = None
+        if not self.rest_mode or not self.players or self.match_over:
+            return
+        raw = self.entry_var.get().strip()
+        if raw.isdigit():
+            self.entry_var.set("")
+            self.submit_rest(int(raw))
 
     # ---------------- Score-Eingabe ----------------
 
     def submit_fkey(self, idx):
+        if self.mini:
+            self.mini.on_fkey(idx)
+            return
         if self.match_over or not self.players:
             return
         if idx < SCORE_KEYS:
@@ -520,8 +593,9 @@ class DartCounterApp:
             self.finish_with(idx - SCORE_KEYS)
 
     def submit_manual(self):
-        if self.match_over or not self.players:
+        if self.match_over or not self.players or self.mini:
             return
+        self._cancel_rest_job()
         raw = self.entry_var.get().strip()
         if not raw.isdigit():
             return
@@ -567,7 +641,7 @@ class DartCounterApp:
 
     def finish_with(self, darts):
         """F10 / F11 / F12 bzw. Strg+1 / 2 / 3: trägt den Rest des aktuellen Spielers als Finish mit n Darts ein."""
-        if self.match_over or not self.players:
+        if self.match_over or not self.players or self.mini:
             return
         player = self.players[self.current_idx]
         if darts not in finish_options(player.score, self.double_out):
@@ -648,6 +722,9 @@ class DartCounterApp:
         self.current_idx = (self.current_idx + 1) % len(self.players)
 
     def undo(self):
+        if self.mini:
+            self.mini.undo()
+            return
         if not self.history:
             return
         last = self.history.pop()
@@ -717,6 +794,42 @@ class DartCounterApp:
             text = "kein Finish möglich"
         tk.Label(w["chips"], text=text, font=self.fonts["recent"], fg=theme.MUTED, bg=theme.CARD).pack()
 
+
+    # ---------------- Minispiele ----------------
+
+    def open_minigames(self):
+        """Auswahl und Start eines Minispiels (Random Checkout, 121, Cricket, ...)."""
+        if self.tourn:
+            messagebox.showinfo("Turnier-Match läuft", "Während eines Turnier-Matches sind keine Minispiele möglich.")
+            return
+        if self.mini and not self.mini.game.finished and not messagebox.askyesno(
+                "Minispiel", "Das laufende Minispiel wird beendet.\n\nEin anderes Minispiel wählen?"):
+            return
+        dlg = MiniGameSetupDialog(self.root, self.cfg)
+        self.root.wait_window(dlg)
+        if not dlg.result:
+            return
+        r = dlg.result
+        self.cfg.update({"last_minigame": r["key"], "last_names": r["names"], "last_players": len(r["names"])})
+        config.save_config(self.cfg)
+        self.leave_minigame()
+        self._enter_minigame(create_game(r["key"], r["names"], r["options"]))
+
+    def _enter_minigame(self, game):
+        self._cancel_rest_job()
+        self.outer.pack_forget()
+        self.mini = MiniGameFrame(self, game)
+        self.mini.pack(fill="both", expand=True)
+        self._rescale()
+
+    def leave_minigame(self):
+        """Zurück zum normalen Dartcounter-Bildschirm."""
+        if self.mini:
+            self.mini.destroy()
+            self.mini = None
+        self.outer.pack(fill="both", expand=True)
+        self.entry.focus_set()
+        self._rescale()
 
     # ---------------- Turniermodus: Turnierleiter (Server) ----------------
 
@@ -819,6 +932,7 @@ class DartCounterApp:
 
     def start_tournament_match(self, client, info):
         """Wird vom Station-Fenster aufgerufen, nachdem das Match erfolgreich abgeholt wurde."""
+        self.leave_minigame()
         self.tourn = {"client": client, "info": info, "sending": False}
         self.tourn_var.set(f"{info['label']}  -  Station {client.station}")
         self.tourn_bar.grid()

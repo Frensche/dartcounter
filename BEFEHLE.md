@@ -129,6 +129,8 @@ sudo ufw allow 8766/udp
 | `F9` oder `R` | Rest eingeben (verbleibende Punktzahl statt geworfener Punkte) |
 | `F10` / `F11` / `F12` oder `Strg+1` / `2` / `3` | Finish mit 1 / 2 / 3 Darts |
 | `Strg+Z` | Letzte Eingabe rückgängig |
+| `F9` / `R`, dann Zahl | Rest: Zahl wird ohne Enter übernommen |
+| `Strg+G` | Minispiele (Random Checkout, 121, Cricket, Around the Clock, Shanghai, Bob's 27, Highscore) |
 | `Strg+N` / `Strg+W` / `Strg+R` | Neues Spiel / Wer beginnt? / Leg neu |
 | `Strg+Q` | Beenden (im Kiosk-Modus mit Passwort) |
 
@@ -137,4 +139,5 @@ sudo ufw allow 8766/udp
 ```bash
 cd ~/dartcounter
 python3 tests/test_engine.py
+python3 tests/test_minigames.py
 ```
