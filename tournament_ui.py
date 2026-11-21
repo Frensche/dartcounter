@@ -13,8 +13,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import theme
-from tournament import (BYE, DEFAULT_PORT, GROUP_NAMES, MAX_PLAYERS, MIN_PLAYERS, MODE_GROUPS, MODE_KO,
-                        ONLINE_SECONDS, Tournament, TournamentError, discover, local_ip, parse_players)
+from tournament import (BYE, DEFAULT_PORT, GROUP_NAMES, MAX_HANDICAP, MAX_PLAYERS, MIN_PLAYERS, MODE_GROUPS,
+                        MODE_KO, ONLINE_SECONDS, Tournament, TournamentError, discover, local_ip, parse_players,
+                        start_scores)
 
 
 def run_async(widget, func, callback):
@@ -88,8 +89,6 @@ class NewTournamentDialog(tk.Toplevel):
         self.name_var = tk.StringVar(value="Dart-Turnier")
         ttk.Entry(left, textvariable=self.name_var, width=32).pack(anchor="w", pady=(2, 10))
         ttk.Label(left, text="Spieler (einer pro Zeile)").pack(anchor="w")
-        ttk.Label(left, text="Handicap optional:  Name;Vorgabe   z. B.  Anna;100", style="Muted.TLabel").pack(
-            anchor="w")
         txt_frame = ttk.Frame(left)
         txt_frame.pack(anchor="w", pady=(2, 0))
         self.txt = tk.Text(txt_frame, width=30, height=15, relief="flat", highlightthickness=1,
@@ -100,6 +99,9 @@ class NewTournamentDialog(tk.Toplevel):
         sb.pack(side="left", fill="y")
         self.count_var = tk.StringVar()
         ttk.Label(left, textvariable=self.count_var, style="Muted.TLabel").pack(anchor="w", pady=(4, 0))
+        self.hc_btn = ttk.Button(left, text="Handicaps festlegen...", command=self._edit_handicaps)
+        self.hc_btn.pack(anchor="w", pady=(8, 0))
+        ttk.Label(left, text="(oder direkt in der Liste:  Name;Vorgabe)", style="Muted.TLabel").pack(anchor="w")
         self.txt.bind("<KeyRelease>", lambda e: self._update_summary())
 
         # ---- rechts: Modus
@@ -121,7 +123,7 @@ class NewTournamentDialog(tk.Toplevel):
                 ("Legs zum Sieg (Gruppe)", self.group_legs, 1, 21))):
             lbl = ttk.Label(mode_box, text=label)
             lbl.grid(row=2 + r, column=0, sticky="w", padx=(18, 8), pady=2)
-            sp = ttk.Spinbox(mode_box, from_=lo, to=hi, textvariable=var, width=5, command=self._update_summary)
+            sp = theme.num_spinbox(mode_box, var, lo, hi, width=5, command=self._update_summary)
             sp.grid(row=2 + r, column=1, sticky="w", pady=2)
             sp.bind("<KeyRelease>", lambda e: self._update_summary())
             self.group_widgets += [lbl, sp]
@@ -143,20 +145,20 @@ class NewTournamentDialog(tk.Toplevel):
             row=1, column=0, columnspan=2, sticky="w", pady=2)
         ttk.Label(rules, text="Legs zum Sieg (KO-Runde)").grid(row=2, column=0, sticky="w", pady=2)
         self.legs = tk.IntVar(value=2)
-        ttk.Spinbox(rules, from_=1, to=21, textvariable=self.legs, width=5).grid(row=2, column=1, sticky="w")
+        theme.num_spinbox(rules, self.legs, 1, 21).grid(row=2, column=1, sticky="w")
         ttk.Label(rules, text="Legs zum Sieg (Finale)").grid(row=3, column=0, sticky="w", pady=2)
         self.final_legs = tk.IntVar(value=3)
-        ttk.Spinbox(rules, from_=1, to=21, textvariable=self.final_legs, width=5).grid(row=3, column=1, sticky="w")
+        theme.num_spinbox(rules, self.final_legs, 1, 21).grid(row=3, column=1, sticky="w")
 
         # ---- rechts: Netzwerk
         net = ttk.LabelFrame(right, text="Netzwerk", padding=10)
         net.pack(fill="x", pady=(10, 0))
         ttk.Label(net, text="Anzahl Stationen").grid(row=0, column=0, sticky="w", pady=2)
         self.stations = tk.IntVar(value=6)
-        ttk.Spinbox(net, from_=1, to=16, textvariable=self.stations, width=5).grid(row=0, column=1, sticky="w")
+        theme.num_spinbox(net, self.stations, 1, 16).grid(row=0, column=1, sticky="w")
         ttk.Label(net, text="Server-Port").grid(row=1, column=0, sticky="w", pady=2, padx=(0, 20))
         self.port = tk.IntVar(value=cfg.get("tournament_port", 8765))
-        ttk.Spinbox(net, from_=1024, to=65535, textvariable=self.port, width=7).grid(row=1, column=1, sticky="w")
+        theme.num_spinbox(net, self.port, 1024, 65535, width=7).grid(row=1, column=1, sticky="w")
 
         self.shuffle = tk.BooleanVar(value=True)
         ttk.Checkbutton(right, text="Spieler zufällig auslosen\n(sonst gilt die Reihenfolge als Setzliste)",
@@ -180,6 +182,26 @@ class NewTournamentDialog(tk.Toplevel):
     def _lines(self):
         return [line for line in self.txt.get("1.0", "end").splitlines() if line.strip()]
 
+    def _edit_handicaps(self):
+        try:
+            names, handicaps = parse_players(self._lines())
+        except TournamentError as e:
+            messagebox.showerror("Handicaps", str(e), parent=self)
+            return
+        if len(names) < 2:
+            messagebox.showinfo("Handicaps", "Bitte zuerst mindestens zwei Spieler in die Liste eintragen.",
+                                parent=self)
+            return
+        dlg = HandicapDialog(self, [(n, handicaps[n]) for n in names], theme.get_int(self.start_score, 501))
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+        lines = [f"{n};{dlg.result[n]}" if dlg.result[n] > 0 else n for n in names]
+        self.txt.delete("1.0", "end")
+        self.txt.insert("1.0", "\n".join(lines))
+        self._update_summary()
+        self.hc_btn.focus_set()
+
     def _players(self):
         return [line.partition(";")[0].strip() for line in self._lines()]
 
@@ -201,10 +223,7 @@ class NewTournamentDialog(tk.Toplevel):
             ko = n
             self.summary_var.set(f"KO-Runde mit {ko} Spielern." if n >= 2 else "")
             return
-        try:
-            g, adv = self.groups.get(), self.advance.get()
-        except tk.TclError:
-            return
+        g, adv = theme.get_int(self.groups, 1, 1, 16), theme.get_int(self.advance, 1, 1, 8)
         if n < 2 or g < 1:
             self.summary_var.set("")
         elif n < 2 * g:
@@ -222,19 +241,138 @@ class NewTournamentDialog(tk.Toplevel):
             t = Tournament(
                 self.name_var.get(), players, handicaps=handicaps,
                 start_score=self.start_score.get(), double_out=self.double_out.get(),
-                legs_to_win=self.legs.get(), final_legs_to_win=self.final_legs.get(),
-                stations=self.stations.get(), shuffle=self.shuffle.get(),
+                legs_to_win=theme.get_int(self.legs, 2, 1, 21),
+                final_legs_to_win=theme.get_int(self.final_legs, 3, 1, 21),
+                stations=theme.get_int(self.stations, 6, 1, 16), shuffle=self.shuffle.get(),
                 mode=self.mode.get(),
-                groups=self.groups.get() if grouped else 0,
-                advance=self.advance.get() if grouped else 0,
-                group_legs_to_win=self.group_legs.get(),
+                groups=theme.get_int(self.groups, 2, 1, 16) if grouped else 0,
+                advance=theme.get_int(self.advance, 2, 1, 8) if grouped else 0,
+                group_legs_to_win=theme.get_int(self.group_legs, 2, 1, 21),
             )
-            port = self.port.get()
+            port = theme.get_int(self.port, DEFAULT_PORT, 1024, 65535)
         except (TournamentError, tk.TclError) as e:
             messagebox.showerror("Turnier", str(e) if isinstance(e, TournamentError)
                                  else "Bitte nur gültige Zahlen eingeben.", parent=self)
             return
         self.result = {"tournament": t, "port": port}
+        self.destroy()
+
+
+# --------------------------------------------------------------------------
+# Handicaps festlegen (verständlich auch für Erstbenutzer)
+# --------------------------------------------------------------------------
+
+class HandicapDialog(tk.Toplevel):
+    """Vorgabe in Punkten je Spieler. result: {Name: Vorgabe} oder None bei Abbruch."""
+
+    HELP = ("Mit einem Handicap bekommt ein schwächerer Spieler einen Vorsprung: Er muss weniger Punkte werfen.\n"
+            "Trage bei ihm eine Vorgabe in Punkten ein (0 = kein Handicap). Im Match gilt immer der Unterschied "
+            "der beiden Spieler: Wer die kleinere Vorgabe hat, startet mit der vollen Punktzahl, der andere mit "
+            "entsprechend weniger.")
+
+    def __init__(self, master, entries, base_start):
+        super().__init__(master)
+        self.title("Handicaps festlegen")
+        self.result = None
+        self.base = base_start
+        self.transient(master)
+        theme.set_window_icon(self)
+
+        frm = ttk.Frame(self, padding=18)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Handicaps festlegen", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frm, text=self.HELP, style="Muted.TLabel", wraplength=520, justify="left").pack(
+            anchor="w", pady=(4, 10))
+
+        box = ttk.Frame(frm)
+        box.pack(fill="both", expand=True)
+        height = min(len(entries), 9) * 36 + 6
+        self.canvas = tk.Canvas(box, width=520, height=height, bg=theme.BG, highlightthickness=0)
+        if len(entries) > 9:
+            sb = ttk.Scrollbar(box, orient="vertical", command=self.canvas.yview)
+            self.canvas.configure(yscrollcommand=sb.set)
+            sb.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        inner = ttk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-2, "units"))
+        self.canvas.bind("<Button-5>", lambda e: self.canvas.yview_scroll(2, "units"))
+
+        self.names = [n for n, _ in entries]
+        self.vars = {}
+        self.spins = []
+        ttk.Label(inner, text="Spieler", style="Muted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 20))
+        ttk.Label(inner, text="Vorgabe in Punkten", style="Muted.TLabel").grid(row=0, column=1, sticky="w")
+        for r, (name, hc) in enumerate(entries, start=1):
+            ttk.Label(inner, text=name, font=("", 11), width=26).grid(row=r, column=0, sticky="w", pady=3,
+                                                                      padx=(0, 20))
+            var = tk.IntVar(value=hc)
+            sp = theme.num_spinbox(inner, var, 0, MAX_HANDICAP, width=6, increment=10, command=self._update_example)
+            sp.grid(row=r, column=1, sticky="w", pady=3)
+            sp.bind("<KeyRelease>", lambda e: self._update_example())
+            sp.bind("<FocusIn>", lambda e, w=sp: self._see(w))
+            self.vars[name] = var
+            self.spins.append(sp)
+
+        self.example = tk.Label(frm, text="", justify="left", wraplength=520, anchor="w", bg=theme.BG,
+                                font=("", 11, "bold"))
+        self.example.pack(fill="x", pady=(12, 0))
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(14, 0))
+        ttk.Button(btns, text="Abbrechen  [Esc]", command=self.destroy).pack(side="right", padx=(8, 0))
+        ttk.Button(btns, text="Alle auf 0", command=self._zero).pack(side="right", padx=(8, 0))
+        ttk.Button(btns, text="Übernehmen  [Enter]", style="Accent.TButton", command=self._ok).pack(side="right")
+        ttk.Label(frm, text="Tab / ↑ ↓: Spieler und Werte ändern  ·  Enter: übernehmen", style="Muted.TLabel").pack(
+            anchor="w", pady=(8, 0))
+
+        theme.bind_dialog_keys(self, ok=self._ok)
+        self._update_example()
+        theme.place_dialog(self)
+        theme.modal(self)
+        self.spins[0].focus_set()
+
+    def _values(self):
+        return {n: theme.get_int(v, 0, 0, MAX_HANDICAP) for n, v in self.vars.items()}
+
+    def _see(self, widget):
+        """Fokussiertes Feld in den sichtbaren Bereich scrollen."""
+        try:
+            self.update_idletasks()
+            total = max(1, self.canvas.bbox("all")[3])
+            y = widget.winfo_y()
+            self.canvas.yview_moveto(max(0.0, (y - 40) / total))
+        except (tk.TclError, TypeError):
+            pass
+
+    def _update_example(self):
+        values = self._values()
+        low = min(values, key=values.get)
+        high = max(values, key=values.get)
+        if values[low] == values[high]:
+            self.example.configure(fg=theme.MUTED, text=f"Alle haben dieselbe Vorgabe - es spielen alle mit "
+                                                       f"{self.base} Punkten.")
+            return
+        a, b = start_scores(self.base, [values[high], values[low]])
+        ok = min(a, b) >= 2
+        self.example.configure(
+            fg=theme.GREEN if ok else "#b00020",
+            text=(f"Beispiel:  {high} gegen {low}  ->  {high} startet mit {a} Punkten, {low} mit {b} Punkten."
+                  if ok else "Der Unterschied ist zu groß - ein Spieler würde mit weniger als 2 Punkten starten."))
+
+    def _zero(self):
+        for v in self.vars.values():
+            v.set(0)
+        self._update_example()
+
+    def _ok(self):
+        values = self._values()
+        if min(start_scores(self.base, list(values.values()))) < 2:
+            messagebox.showerror("Handicaps", "Der Unterschied ist zu groß - ein Spieler würde mit weniger als "
+                                              "2 Punkten starten.", parent=self)
+            return
+        self.result = values
         self.destroy()
 
 
@@ -265,7 +403,7 @@ class ResultDialog(tk.Toplevel):
             ttk.Radiobutton(frm, value=name, variable=self.winner).grid(row=2 + i, column=0)
             ttk.Label(frm, text=name, width=22, font=("", 11)).grid(row=2 + i, column=1, sticky="w", padx=6)
             var = tk.IntVar(value=old[i])
-            ttk.Spinbox(frm, from_=0, to=99, textvariable=var, width=4).grid(row=2 + i, column=2, pady=4)
+            theme.num_spinbox(frm, var, 0, 99, width=4).grid(row=2 + i, column=2, pady=4)
             self.legs_vars.append(var)
 
         btns = ttk.Frame(frm)
@@ -835,10 +973,10 @@ class ConnectDialog(tk.Toplevel):
         e.grid(row=1, column=1, **pad)
         ttk.Label(frm, text="Port:").grid(row=2, column=0, sticky="w", **pad)
         self.port = tk.IntVar(value=cfg.get("tournament_port", DEFAULT_PORT))
-        ttk.Spinbox(frm, from_=1024, to=65535, textvariable=self.port, width=7).grid(row=2, column=1, sticky="w", **pad)
+        theme.num_spinbox(frm, self.port, 1024, 65535, width=7).grid(row=2, column=1, sticky="w", **pad)
         ttk.Label(frm, text="Diese Station (Nr.):").grid(row=3, column=0, sticky="w", **pad)
         self.station = tk.IntVar(value=cfg.get("tournament_station", 1))
-        ttk.Spinbox(frm, from_=1, to=16, textvariable=self.station, width=5).grid(row=3, column=1, sticky="w", **pad)
+        theme.num_spinbox(frm, self.station, 1, 16).grid(row=3, column=1, sticky="w", **pad)
 
         btns = ttk.Frame(frm)
         btns.grid(row=4, column=0, columnspan=2, pady=(14, 0), sticky="e")

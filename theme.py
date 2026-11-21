@@ -13,6 +13,7 @@ MUTED = "#6b6f76"
 LINE = "#c9ccd1"
 GREEN = "#1b6b1b"
 FOCUS = "#ffc928"   # sichtbarer Tastaturfokus
+CHIP_COLORS = {"triple": RED, "double": GREEN, "single": "#34373d"}   # Finish-Wege: Triple / Double / Single
 
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 _images = {}  # Referenzen halten, sonst räumt Tk die Bilder ab
@@ -114,6 +115,8 @@ def apply_style(root):
     button("Accent.TButton", RED, RED_HOVER, font=("", 11, "bold"), pad=(18, 10))
     button("Quick.TButton", "#34373d", "#565a62", font=("", 12, "bold"), pad=(8, 12))
     button("Danger.TButton", "#7a2a31", "#9b3640")
+    button("Rest.TButton", "#b86e00", "#d98200", font=("", 12, "bold"), pad=(8, 12))
+    button("Finish.TButton", GREEN, "#238a23", font=("", 12, "bold"), pad=(8, 12))
 
     s.configure("Treeview", background=CARD, fieldbackground=CARD, foreground=INK, rowheight=28,
                 bordercolor=LINE, lightcolor=LINE, darkcolor=LINE, borderwidth=1)
@@ -128,6 +131,7 @@ def apply_style(root):
     s.map("TNotebook.Tab", background=[("selected", CARD)], foreground=[("selected", RED)])
     s.configure("TScrollbar", background="#c9ccd1", troughcolor=BG, bordercolor=BG, arrowcolor=INK)
     s.configure("Big.Treeview", rowheight=40, font=("", 13))
+    s.configure("Stats.Treeview", rowheight=32, font=("", 12))
     enable_keyboard(root)
 
 
@@ -174,3 +178,33 @@ def tab_moves_focus(text_widget):
     text_widget.bind("<Tab>", lambda e: (e.widget.tk_focusNext().focus_set(), "break")[1])
     text_widget.bind("<Shift-Tab>", lambda e: (e.widget.tk_focusPrev().focus_set(), "break")[1])
     text_widget.bind("<ISO_Left_Tab>", lambda e: (e.widget.tk_focusPrev().focus_set(), "break")[1])
+
+
+# --------------------------------------------------------------------------
+# Zahleneingabe: nur Ziffern erlaubt
+# --------------------------------------------------------------------------
+
+def digits_only(widget, maxlen=3):
+    """Lässt in einem Eingabefeld nur Ziffern zu (Buchstaben und Sonderzeichen werden einfach nicht angenommen)."""
+    check = widget.register(lambda proposed: proposed == "" or (proposed.isdigit() and len(proposed) <= maxlen))
+    widget.configure(validate="key", validatecommand=(check, "%P"))
+    return widget
+
+
+def num_spinbox(parent, variable, lo, hi, width=5, **kw):
+    """Zahlen-Spinbox, die nur Ziffern annimmt."""
+    sp = ttk.Spinbox(parent, from_=lo, to=hi, textvariable=variable, width=width, **kw)
+    return digits_only(sp, maxlen=len(str(hi)))
+
+
+def get_int(variable, default, lo=None, hi=None):
+    """Zahl aus einer Variablen lesen; bei leerem/ungültigem Feld der Standardwert, sonst auf lo..hi begrenzt."""
+    try:
+        value = int(variable.get())
+    except (tk.TclError, ValueError, TypeError):
+        return default
+    if lo is not None:
+        value = max(lo, value)
+    if hi is not None:
+        value = min(hi, value)
+    return value

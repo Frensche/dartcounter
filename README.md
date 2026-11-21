@@ -29,17 +29,36 @@ Programm nicht sperren - dafür müsste der Desktop selbst als Kiosk konfigurier
 - **Startpunktzahl** 301 / 501 / 701 (Standard: 501)
 - **Double-Out** (Standard an, kann auf Straight-Out umgestellt werden)
 - **Legs** als "First to X" einstellbar (Standard: 1)
-- **F1–F12** als Schnelleingabe für die 12 häufigsten 3-Darts-Scores
-  (Standardbelegung: 26, 41, 45, 60, 81, 85, 95, 100, 110, 120, 140, 180),
-  jederzeit über *Einstellungen → F1–F12 bearbeiten* änderbar. Die Belegung
-  wird dauerhaft in `~/.config/dartcounter/config.json` gespeichert.
+- **F-Tasten** (Standard in dieser Reihenfolge):
+  `F1`=0, `F2`=26, `F3`=41, `F4`=45, `F5`=60, `F6`=81, `F7`=85, `F8`=100 (F1–F8 sind unter
+  *Einstellungen* änderbar und werden in `~/.config/dartcounter/config.json` gespeichert),
+  `F9` oder `R` = **Rest**, `F10` / `F11` / `F12` (oder `Strg+1` / `Strg+2` / `Strg+3`) =
+  **Finish mit 1 / 2 / 3 Darts**.
+- **Rest-Eingabe:** `F9` oder `R` drücken, dann die *verbleibende* Punktzahl tippen und `Enter` -
+  das Programm rechnet die geworfenen Punkte selbst aus.
+- **Finish:** Die Finish-Tasten tragen automatisch den Rest des Spielers als Finish ein und
+  merken sich die Anzahl der Darts (nur wählbar, wenn das Finish mit so vielen Darts möglich ist).
+  Gibt man das Finish direkt als Zahl ein (oder per Rest 0), kommt die Frage *„Mit wie vielen
+  Darts?“* (Tasten `1` / `2` / `3`).
+- **Nur Zahlen:** In allen Zahlenfeldern werden nur Ziffern angenommen. Unmögliche Eingaben
+  (über 180 oder Aufnahmen wie 179 / 163, die sich nicht werfen lassen) werden abgelehnt.
+- **Finish-Wege für alle Spieler** stehen dauerhaft als große farbige Felder im Spielerfeld
+  (rot = Triple, grün = Double/Bull, grau = Single), auch wenn man nicht am Zug ist.
+- **Statistik nach dem Spiel:** Legs, 3-Dart-Average, Average der ersten 9 Darts, Darts gesamt,
+  höchste Aufnahme, 180er / 140+ / 100+, höchstes Finish, bestes Leg, Busts - danach die Frage
+  nach *Revanche* (gleiche Spieler und Einstellungen), *Neues Spiel* oder *Schließen*.
+- **Neues Spiel merkt sich** Anzahl der Spieler, Namen, Handicaps und Einstellungen des
+  vorherigen Spiels.
+- **Layout:** Die Oberfläche nutzt den ganzen Bildschirm; Schriften und Felder wachsen mit der
+  Fenstergröße.
 - **Wer beginnt?** Vor jedem Spiel (auch bei Turnier-Matches) erscheint ein Dialog: eine
   virtuelle **Münze** kann geworfen werden (mit Animation, beliebig oft wiederholbar), oder
   die Spieler **bullen aus** und der Gewinner wird von Hand ausgewählt. Wer beginnt, lässt
   sich in jedem Fall frei festlegen; in den folgenden Legs wechselt der Anwurf. Bei Bedarf
   vor dem ersten Wurf auch später über *Spiel → Wer beginnt?* erreichbar.
-- **Handicap** (Vorgabe in Punkten) pro Spieler - im freien Spiel (z. B. 1:1) und im
-  Turnier. Die Vorgabe wird relativ zum Spieler mit der kleinsten Vorgabe vom Startwert
+- **Handicap** (Vorgabe in Punkten) pro Spieler - im freien Spiel (z. B. 1:1: Haken *„Mit
+  Handicap spielen“*, die Vorschau zeigt sofort, mit wie vielen Punkten jeder startet) und im
+  Turnier (Button *„Handicaps festlegen“* in der Turnier-Erstellung). Die Vorgabe wird relativ zum Spieler mit der kleinsten Vorgabe vom Startwert
   abgezogen: Bei 501 und Vorgaben 0 / 100 startet der eine mit 501, der andere mit 401.
   Bei mehr als zwei Spielern gilt dasselbe für jeden einzelnen.
 - **Letzte Würfe** werden bei jedem Spieler angezeigt (neueste zuerst, Busts
@@ -63,12 +82,13 @@ Programm nicht sperren - dafür müsste der Desktop selbst als Kiosk konfigurier
 
 ## Bedienung
 
-- `F1`–`F12`: trägt den hinterlegten Score für den aktuellen Spieler ein und
-  wechselt automatisch zum nächsten Spieler
-- Zahl eintippen + `Enter`: trägt einen individuellen Turn-Score ein
-- `Strg+Z`: letzte Eingabe rückgängig machen
-- Menü *Spiel*: neues Spiel, Leg neu starten, Beenden
-- Menü *Einstellungen*: F1–F12 bearbeiten
+| Taste | Wirkung |
+|---|---|
+| `F1`–`F8` | Schnell-Score der Taste (Standard 0, 26, 41, 45, 60, 81, 85, 100) |
+| `F9` oder `R` | Rest-Modus: nächste Zahl ist die *Restpunktzahl* |
+| `F10` / `F11` / `F12` oder `Strg+1` / `2` / `3` | Finish mit 1 / 2 / 3 Darts |
+| Zahl + `Enter` | Eigene Aufnahme (nur Ziffern); bei einem Finish folgt die Dart-Abfrage |
+| `Strg+Z` | Letzte Eingabe rückgängig |
 
 ## Bedienung ohne Maus (nur Tastatur / Touchpad-frei)
 

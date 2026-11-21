@@ -125,7 +125,16 @@ sudo ufw allow 8766/udp
 | Taste | Wirkung |
 |---|---|
 | `Esc` | Hauptmenü (Pfeiltasten + Enter) |
-| `F1`–`F12` | Schnell-Score eintragen |
+| `F1`–`F8` | Schnell-Scores: 0, 26, 41, 45, 60, 81, 85, 100 |
+| `F9` oder `R` | Rest eingeben (verbleibende Punktzahl statt geworfener Punkte) |
+| `F10` / `F11` / `F12` oder `Strg+1` / `2` / `3` | Finish mit 1 / 2 / 3 Darts |
 | `Strg+Z` | Letzte Eingabe rückgängig |
 | `Strg+N` / `Strg+W` / `Strg+R` | Neues Spiel / Wer beginnt? / Leg neu |
 | `Strg+Q` | Beenden (im Kiosk-Modus mit Passwort) |
+
+## 10. Tests (ohne Bildschirm)
+
+```bash
+cd ~/dartcounter
+python3 tests/test_engine.py
+```
